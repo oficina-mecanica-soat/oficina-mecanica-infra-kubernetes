@@ -30,3 +30,10 @@ module "ecr" {
 
   tags = local.common_tags
 }
+module "ecr_execucao" {
+  source = "../../modules/ecr"
+
+  name = var.execucao_ecr_repository_name
+
+  tags = local.common_tags
+}

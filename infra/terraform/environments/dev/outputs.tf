@@ -72,3 +72,13 @@ output "api_node_group_asg_name" {
   description = "Dynamically discovered Auto Scaling group name of the API node group."
   value       = local.api_node_group_asg_name
 }
+
+output "execucao_ecr_repository_name" {
+  description = "Nome do repositório ECR da imagem do serviço de Execução."
+  value       = module.ecr_execucao.repository_name
+}
+
+output "execucao_ecr_repository_url" {
+  description = "URL do repositório ECR da imagem do serviço de Execução."
+  value       = module.ecr_execucao.repository_url
+}
