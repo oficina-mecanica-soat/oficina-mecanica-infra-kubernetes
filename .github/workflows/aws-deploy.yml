@@ -108,6 +108,7 @@ jobs:
 
       - name: "🔑 02 · Configurar credenciais AWS"
         uses: aws-actions/configure-aws-credentials@v6
+        id: aws_credentials
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -149,9 +150,9 @@ jobs:
           path: |
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate.backup
-          key: tfstate-kubernetes-${{ inputs.environment_name }}-${{ github.run_id }}
+          key: tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-${{ github.run_id }}
           restore-keys: |
-            tfstate-kubernetes-${{ inputs.environment_name }}-
+            tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-
 
       - name: "📝 06 · Escrever variáveis do Terraform"
         run: |
@@ -162,6 +163,13 @@ jobs:
             "eks_node_role_name": "$EKS_NODE_ROLE_NAME"
           }
           JSON
+
+      - name: "🛡️ Validar state da conta AWS atual"
+        run: node .github/scripts/bootstrap-account-state.cjs
+
+      - name: "🛡️ Preparar configuração exclusiva de destroy"
+        if: env.TERRAFORM_ACTION == 'destroy'
+        run: node .github/scripts/prepare-destroy.cjs
 
       - name: "🚀 07 · Inicializar Terraform"
         run: terraform -chdir="$TF_WORKING_DIRECTORY" init -input=false
@@ -199,8 +207,8 @@ jobs:
             fi
           }
 
-          cluster_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -raw eks_cluster_name 2>/dev/null || true)"
-          ecr_repository_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -raw ecr_repository_name 2>/dev/null || true)"
+          cluster_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -json | jq -r '.eks_cluster_name.value // empty')"
+          ecr_repository_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -json | jq -r '.ecr_repository_name.value // empty')"
 
           if [ -z "$cluster_name" ]; then
             echo "::warning::EKS output is absent from Terraform state. Continuing as partial destroy recovery."
@@ -268,6 +276,7 @@ jobs:
 
       - name: "🔑 02 · Configurar credenciais AWS"
         uses: aws-actions/configure-aws-credentials@v6
+        id: aws_credentials
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -280,6 +289,13 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
+      - name: "🛡️ Validar state da conta AWS atual"
+        run: node .github/scripts/bootstrap-account-state.cjs
+
+      - name: "🛡️ Preparar configuração exclusiva de destroy"
+        if: env.TERRAFORM_ACTION == 'destroy'
+        run: node .github/scripts/prepare-destroy.cjs
+
       - name: "🚀 04 · Inicializar Terraform"
         run: terraform -chdir="$TF_WORKING_DIRECTORY" init -input=false
 
@@ -289,9 +305,9 @@ jobs:
           path: |
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate.backup
-          key: tfstate-kubernetes-${{ inputs.environment_name }}-${{ github.run_id }}
+          key: tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-${{ github.run_id }}
           restore-keys: |
-            tfstate-kubernetes-${{ inputs.environment_name }}-
+            tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-
 
       - name: "⬇️ 06 · Baixar plano do Terraform publicado"
         uses: actions/download-artifact@v8
@@ -299,8 +315,16 @@ jobs:
           name: tfplan-kubernetes-${{ github.run_id }}
           path: ${{ env.TF_WORKING_DIRECTORY }}
 
+      - name: "🛡️ Validar plano exclusivo de destroy"
+        if: env.TERRAFORM_ACTION == 'destroy'
+        run: node .github/scripts/prepare-destroy.cjs verify-plan
+
       - name: "✅ 07 · Aplicar plano do Terraform"
         run: terraform -chdir="$TF_WORKING_DIRECTORY" apply -input=false -auto-approve tfplan
+
+      - name: "🔎 Confirmar state sem recursos gerenciados"
+        if: env.TERRAFORM_ACTION == 'destroy'
+        run: node .github/scripts/prepare-destroy.cjs verify-state
 
       - name: "💾 08 · Salvar cache final do state Terraform"
         if: always()
@@ -309,7 +333,7 @@ jobs:
           path: |
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate.backup
-          key: tfstate-kubernetes-${{ inputs.environment_name }}-${{ github.run_id }}
+          key: tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-${{ github.run_id }}
 
       - name: "🔎 09 · Validar Kubernetes real após apply"
         if: env.TERRAFORM_ACTION == 'apply'
