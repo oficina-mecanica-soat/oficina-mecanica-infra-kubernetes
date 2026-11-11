@@ -200,3 +200,13 @@ Sem cache no escopo atual, a esteira bloqueia apply. Um destroy dedicado só pod
 ## Validação deste incremento
 
 Validação local com Terraform 1.15.8: formatação, inicialização sem backend e validação aprovadas; quatro testes Node dos guardrails aprovados. O Terraform global 1.17.0 não atende à restrição do repositório; foi usado o executável 1.15.8 já disponível, sem alterar essa restrição. O CI repete as verificações antes do merge. Não há prova de criação/remoção real sem a janela AWS autorizada. O próximo apply criará um ECR e dois parâmetros SSM adicionais e atualizará o status compartilhado; a mesma esteira continuará gerenciando seu ciclo de vida.
+
+## Preparação da subida — F4-04
+
+Após a validação real da VPC em 11/11/2026, o retorno do controle a `apply` prepara a próxima etapa da plataforma. `AWS_DEPLOY_ENABLED=false` permanece no repositório; o merge não provisiona EKS/ECR nem instala Datadog. A execução exige janela autorizada e credenciais/dependências reconferidas.
+
+A revisão corrigiu no job de aplicação a restauração do cache para ocorrer antes da validação do state, preparação de destroy e terraform init, seguindo o mesmo padrão da VPC/Execução. A chave continua isolada por conta; o cache e o state não são editados/apagados. O teste inline do CI confere a ordem nos dois jobs. Não acrescenta arquivo ou pasta de scripts.
+
+O futuro apply utiliza a configuração existente: EKS, managed node group nas subnets privadas, ECRs da API e Execução, NLB interno com seus recursos de ingresso e contratos SSM. O CD existente chama em seguida o workflow especializado de Datadog, com Agent e Cluster Agent. Não cria nova role IAM ou workload da aplicação, não provisiona RDS/Gateway e não altera topologia, nomes, versões ou regras dos módulos.
+
+A VPC deve continuar `ready` e publicar os contratos esperados. As roles existentes do laboratório e a chave Datadog configurada precisam funcionar na execução real; testes locais não comprovam IAM, conectividade, admissão do tracer ou ingestão de telemetria. O status de infraestrutura não prova a Saga ou os serviços. Gabriel faz o merge e autoriza separadamente o provisionamento dessa etapa.
