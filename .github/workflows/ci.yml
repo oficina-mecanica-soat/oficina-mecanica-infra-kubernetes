@@ -157,6 +157,38 @@ jobs:
           console.log('Ordem de restauração do state validada nos dois jobs.');
           VALIDAR_ORDEM_STATE
 
+      - name: "🧪 Validar escopo da exceção IMDSv2 acadêmica"
+        run: |
+          node <<'VALIDAR_IMDS_ACADEMICO'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const assert = require('node:assert/strict');
+          const workflow = fs.readFileSync('.github/workflows/aws-deploy.yml', 'utf8');
+          const bloco = workflow.match(/          node <<'CONFIGURAR_IMDS_ACADEMICO'\r?\n([\s\S]*?)          CONFIGURAR_IMDS_ACADEMICO/);
+          assert.ok(bloco);
+          const arquivo = path.join(process.env.RUNNER_TEMP, 'validacao-imds.cjs');
+          fs.writeFileSync(arquivo, bloco[1].split(/\r?\n/).map(linha => linha.slice(10)).join('\n'));
+          const { validarGrupo, validarInstancias, conferir } = require(arquivo);
+          const grupo = { status: 'ACTIVE', nodeRole: 'arn:aws:iam::123456789012:role/LabRole', resources: { autoScalingGroups: [{ name: 'grupo' }] } };
+          assert.deepEqual(validarGrupo(grupo, '123456789012'), ['grupo']);
+          assert.throws(() => validarGrupo(grupo, '999999999999'));
+          assert.throws(() => validarGrupo({ ...grupo, status: 'DEGRADED' }, '123456789012'));
+          assert.throws(() => validarGrupo({ ...grupo, nodeRole: 'outra-role' }, '123456789012'));
+          const grupos = [{ AutoScalingGroupName: 'grupo', Instances: [{ InstanceId: 'i-node' }] }];
+          const instancia = { InstanceId: 'i-node', State: { Name: 'running' }, Tags: [{ Key: 'eks:cluster-name', Value: 'cluster' }], MetadataOptions: { HttpEndpoint: 'enabled' } };
+          assert.deepEqual(validarInstancias(grupos, ['grupo'], [instancia], 'cluster'), ['i-node']);
+          assert.throws(() => validarInstancias(grupos, ['grupo'], [instancia], 'outro-cluster'));
+          assert.throws(() => validarInstancias(grupos, ['grupo'], [], 'cluster'));
+          assert.throws(() => validarInstancias(grupos, ['outro-grupo'], [instancia], 'cluster'));
+          assert.throws(() => validarInstancias(grupos, ['grupo'], [{ ...instancia, State: { Name: 'stopped' } }], 'cluster'));
+          const opcoes = { State: 'applied', HttpEndpoint: 'enabled', HttpTokens: 'required', HttpPutResponseHopLimit: 2 };
+          assert.ok(conferir(opcoes));
+          for (const invalida of [{ ...opcoes, State: 'pending' }, { ...opcoes, HttpTokens: 'optional' }, { ...opcoes, HttpPutResponseHopLimit: 1 }, { ...opcoes, HttpEndpoint: 'disabled' }]) assert.equal(conferir(invalida), false);
+          assert.match(workflow, /if: env.TERRAFORM_ACTION == 'apply'\r?\n        run: \|\r?\n          node <<'CONFIGURAR_IMDS_ACADEMICO'/);
+          assert.match(bloco[1], /'--http-tokens', 'required', '--http-put-response-hop-limit', '2'/);
+          console.log('Escopo da LabRole, inventário do node group e IMDSv2 obrigatório validados.');
+          VALIDAR_IMDS_ACADEMICO
+
       - name: "🎨 03 · Verificar formatação Terraform"
         run: |
           terraform fmt -check -recursive infra/terraform
