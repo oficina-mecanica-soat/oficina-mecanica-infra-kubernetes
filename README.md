@@ -10,7 +10,7 @@ Provisionar e operar a base Kubernetes da solução da Oficina Mecânica em AWS,
 
 - Criar o cluster EKS de `development`.
 - Criar o Managed Node Group.
-- Criar o repositório ECR usado pela imagem da API.
+- Criar os repositórios ECR das imagens da API e do serviço de Execução.
 - Consumir os outputs da VPC publicados no SSM Parameter Store.
 - Publicar outputs de Kubernetes e ECR no SSM para as próximas esteiras.
 - Controlar `apply` e `destroy` por workflow com validações reais na AWS.
@@ -77,6 +77,16 @@ Depois do apply, esta esteira publica:
 | `/oficina-mecanica/development/kubernetes/node_group_name` | Nome do Managed Node Group. |
 | `/oficina-mecanica/development/kubernetes/ecr_repository_name` | Nome do ECR da API. |
 | `/oficina-mecanica/development/kubernetes/ecr_repository_url` | URL do ECR da API. |
+| `/oficina-mecanica/development/kubernetes/execucao_ecr_repository_name` | Nome do ECR do serviço de Execução: `oficina-mecanica-execucao`. |
+| `/oficina-mecanica/development/kubernetes/execucao_ecr_repository_url` | URL do ECR do serviço de Execução. |
+
+### ECR do Execução — contrato da Fase 4
+
+Conforme ADR-0023/25 e F4-04, o ECR continua sob ownership desta infraestrutura. O módulo `ecr_execucao` reutiliza `modules/ecr`, com as mesmas políticas da API: tags imutáveis, varredura no push e remoção de imagens no destroy acadêmico. O nome padrão é `oficina-mecanica-execucao`, configurado por `execucao_ecr_repository_name`. Não altera o endereço Terraform `module.ecr` nem os contratos existentes da API.
+
+Os dois novos parâmetros são `String`, sem dados sensíveis, e usam `kubernetes_ssm_prefix`. Os outputs Terraform têm os mesmos nomes dos sufixos SSM. O status `ready` depende também da criação do novo registry e de seus contratos. Após apply autorizado, a esteira compara a URL no ECR, os outputs Terraform e os dois parâmetros SSM; no destroy, confirma ausência do registry identificado no state e dos parâmetros. Falhas de permissão/autenticação continuam bloqueando a operação.
+
+Este PR prepara infraestrutura; não publica imagem, não cria workload, DynamoDB ou SQS e não conecta consumidores. O PR seguinte do Execução consumirá esses contratos, eliminando a configuração paralela por `ECR_REPOSITORY_NAME`.
 
 ## 🔐 Variáveis e secrets
 
@@ -94,6 +104,7 @@ Environment variables:
 
 | Nome | Valor sugerido |
 | --- | --- |
+| `AWS_DEPLOY_ENABLED` | `false` enquanto o laboratório estiver encerrado; `true` somente na janela autorizada. Definir no nível do repositório para o detector de CD. |
 | `AWS_REGION` | `us-east-1` |
 | `EKS_CLUSTER_ROLE_NAME` | `LabRole` quando o lab usar role única, ou a role EKS indicada pela AWS Academy. |
 | `EKS_NODE_ROLE_NAME` | `LabRole` quando o lab usar role única, ou a role de nodes indicada pela AWS Academy. |
@@ -130,6 +141,8 @@ TERRAFORM_ACTION=destroy
 ```
 
 Regra de segurança: `destroy` só é aceito quando `terraform-action.env` muda no próprio PR/merge. Isso evita destruir recursos em execuções futuras por acidente.
+
+Com `AWS_DEPLOY_ENABLED=false` (ou ausente), o CD não chama Terraform nem Datadog. Mudança implantável bloqueada não abre promoção para release como se tivesse sido aplicada; mudanças apenas documentais mantêm a promoção existente. O workflow reutilizável AWS também exige habilitação explícita. `terraform-action.env` permanece inalterado; habilitar o controle não substitui o PR dedicado exigido para destroy. Avisar Gabriel para criar o laboratório e atualizar os environments antes da futura janela de validação.
 
 O deploy do Datadog ocorre automaticamente após mudanças relevantes e um `apply` bem-sucedido. O `workflow_dispatch` permanece como contingência manual. Em `destroy`, a esteira não tenta instalar Datadog.
 
@@ -183,3 +196,17 @@ O retorno isolado de terraform-action.env para apply ainda é reconhecido como m
 As chaves de cache incluem o ID da conta retornado pela autenticação AWS, antes do ambiente e da execução. A restauração só pesquisa esse escopo, sem fallback para chaves históricas sem conta. Os caches anteriores permanecem preservados como histórico do laboratório encerrado 058264466885, inclusive quando contêm referências que a conta atual não consegue consultar. AccessDenied não é convertido em ausência.
 
 Sem cache no escopo atual, a esteira bloqueia apply. Um destroy dedicado só pode iniciar state novo depois de consultas read-only confirmarem que não existem recursos ou contratos do projeto na conta atual. Recursos internos do laboratório são preservados. Depois disso, o plano exclusivo de destroy e a validação de state vazio produzem o cache usado pelas próximas execuções da mesma conta. Em laboratório com recursos existentes e cache ausente, é necessário recuperar o state correto; o bootstrap não libera provisionamento automático.
+
+## Validação deste incremento
+
+Validação local com Terraform 1.15.8: formatação, inicialização sem backend e validação aprovadas; quatro testes Node dos guardrails aprovados. O Terraform global 1.17.0 não atende à restrição do repositório; foi usado o executável 1.15.8 já disponível, sem alterar essa restrição. O CI repete as verificações antes do merge. Não há prova de criação/remoção real sem a janela AWS autorizada. O próximo apply criará um ECR e dois parâmetros SSM adicionais e atualizará o status compartilhado; a mesma esteira continuará gerenciando seu ciclo de vida.
+
+## Preparação da subida — F4-04
+
+Após a validação real da VPC em 11/11/2026, o retorno do controle a `apply` prepara a próxima etapa da plataforma. `AWS_DEPLOY_ENABLED=false` permanece no repositório; o merge não provisiona EKS/ECR nem instala Datadog. A execução exige janela autorizada e credenciais/dependências reconferidas.
+
+A revisão corrigiu no job de aplicação a restauração do cache para ocorrer antes da validação do state, preparação de destroy e terraform init, seguindo o mesmo padrão da VPC/Execução. A chave continua isolada por conta; o cache e o state não são editados/apagados. O teste inline do CI confere a ordem nos dois jobs. Não acrescenta arquivo ou pasta de scripts.
+
+O futuro apply utiliza a configuração existente: EKS, managed node group nas subnets privadas, ECRs da API e Execução, NLB interno com seus recursos de ingresso e contratos SSM. O CD existente chama em seguida o workflow especializado de Datadog, com Agent e Cluster Agent. Não cria nova role IAM ou workload da aplicação, não provisiona RDS/Gateway e não altera topologia, nomes, versões ou regras dos módulos.
+
+A VPC deve continuar `ready` e publicar os contratos esperados. As roles existentes do laboratório e a chave Datadog configurada precisam funcionar na execução real; testes locais não comprovam IAM, conectividade, admissão do tracer ou ingestão de telemetria. O status de infraestrutura não prova a Saga ou os serviços. Gabriel faz o merge e autoriza separadamente o provisionamento dessa etapa.

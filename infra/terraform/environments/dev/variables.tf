@@ -108,3 +108,9 @@ variable "api_internal_node_port" {
     error_message = "The API internal NodePort must be between 30000 and 32767."
   }
 }
+
+variable "execucao_ecr_repository_name" {
+  description = "Nome do repositório ECR da imagem do serviço de Execução."
+  type        = string
+  default     = "oficina-mecanica-execucao"
+}
