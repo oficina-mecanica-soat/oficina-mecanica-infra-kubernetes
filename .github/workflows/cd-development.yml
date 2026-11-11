@@ -58,7 +58,7 @@ jobs:
 
             while IFS= read -r file; do
               case "$file" in
-                infra/terraform/*)
+                infra/terraform/*|.github/workflows/aws-deploy.yml|.github/workflows/cd-development.yml)
                   echo "Terraform deployable change detected: $file"
                   terraform_deploy_required=true
                   ;;

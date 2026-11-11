@@ -205,6 +205,8 @@ Validação local com Terraform 1.15.8: formatação, inicialização sem backen
 
 ### Recuperação do acesso IMDSv2 acadêmico
 
+O detector do CD considera deployáveis tanto `infra/terraform/*` quanto os workflows `aws-deploy.yml` e `cd-development.yml`, pois mudanças na execução operacional precisam ser aplicadas. Mudanças exclusivas de CI/README não acionam AWS; Datadog mantém seu detector especializado. A habilitação `AWS_DEPLOY_ENABLED` continua obrigatória e independente da detecção.
+
 Na validação remota do Execução, o node apresentou `HttpTokens=required` e hop limit `1`; o SDK no Pod falhou ao obter token IMDSv2. Gabriel aprovou propor hop limit `2`, preservando tokens obrigatórios e reconhecendo acesso possível por outros Pods do mesmo node, conforme complemento da ADR-0025 na API. Não oferece isolamento IAM por aplicação.
 
 Após apply e persistência do state, a esteira existente configura somente as instâncias atuais dos Auto Scaling Groups retornados pelo node group gerenciado. Exige grupo ACTIVE, `LabRole` da conta autenticada, instâncias running e tag do cluster correspondente. Aplica endpoint habilitado, tokens obrigatórios e hop limit `2`, confirmando o estado aplicado; consulta ou alteração negada interrompe a esteira. Destroy não executa essa etapa. Não altera IAM/trust, não lê credenciais IMDS e não copia secrets do runner para Pods.
