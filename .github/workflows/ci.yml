@@ -189,6 +189,46 @@ jobs:
           console.log('Escopo da LabRole, inventário do node group e IMDSv2 obrigatório validados.');
           VALIDAR_IMDS_ACADEMICO
 
+      - name: "🧪 Validar detecção de mudanças do deploy AWS"
+        run: |
+          node <<'VALIDAR_DETECTOR_AWS'
+          const fs = require('node:fs');
+          const os = require('node:os');
+          const path = require('node:path');
+          const cp = require('node:child_process');
+          const assert = require('node:assert/strict');
+          const workflow = fs.readFileSync('.github/workflows/cd-development.yml', 'utf8');
+          const match = workflow.match(/        run: \|\r?\n([\s\S]*?)\r?\n  deploy-development:/);
+          assert.ok(match);
+          const script = match[1].split(/\r?\n/).map(linha => linha.slice(10)).join('\n');
+          for (const [arquivo, terraform, datadog] of [
+            ['infra/terraform/environments/dev/main.tf', true, false],
+            ['.github/workflows/aws-deploy.yml', true, false],
+            ['.github/workflows/cd-development.yml', true, false],
+            ['observability/datadog/values.yaml', false, true],
+            ['.github/workflows/datadog-observability.yml', false, true],
+            ['.github/workflows/ci.yml', false, false],
+            ['README.md', false, false]
+          ]) {
+            const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'detector-aws-'));
+            try {
+              const git = (...args) => cp.execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+              git('init', '-q'); git('config', 'user.name', 'Teste'); git('config', 'user.email', 'teste@example.invalid');
+              git('commit', '--allow-empty', '-qm', 'base');
+              const before = git('rev-parse', 'HEAD');
+              fs.mkdirSync(path.dirname(path.join(dir, arquivo)), { recursive: true });
+              fs.writeFileSync(path.join(dir, arquivo), 'teste');
+              git('add', '.'); git('commit', '-qm', 'mudanca');
+              cp.execFileSync('bash', ['-e', '-o', 'pipefail', '-c', script], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
+                env: { ...process.env, GITHUB_BEFORE: before, GITHUB_SHA: git('rev-parse', 'HEAD'), GITHUB_OUTPUT: 'saida' } });
+              const saida = fs.readFileSync(path.join(dir, 'saida'), 'utf8');
+              assert.ok(saida.includes(`terraform_deploy_required=${terraform}\n`), arquivo);
+              assert.ok(saida.includes(`datadog_deploy_required=${datadog}\n`), arquivo);
+            } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+          }
+          console.log('Detector real validado: Terraform/workflows AWS, Datadog e alterações sem deploy.');
+          VALIDAR_DETECTOR_AWS
+
       - name: "🎨 03 · Verificar formatação Terraform"
         run: |
           terraform fmt -check -recursive infra/terraform
