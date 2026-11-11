@@ -203,6 +203,16 @@ Validação local com Terraform 1.15.8: formatação, inicialização sem backen
 
 ## Preparação da subida — F4-04
 
+### Recuperação do acesso IMDSv2 acadêmico
+
+Na validação remota do Execução, o node apresentou `HttpTokens=required` e hop limit `1`; o SDK no Pod falhou ao obter token IMDSv2. Gabriel aprovou propor hop limit `2`, preservando tokens obrigatórios e reconhecendo acesso possível por outros Pods do mesmo node, conforme complemento da ADR-0025 na API. Não oferece isolamento IAM por aplicação.
+
+Após apply e persistência do state, a esteira existente configura somente as instâncias atuais dos Auto Scaling Groups retornados pelo node group gerenciado. Exige grupo ACTIVE, `LabRole` da conta autenticada, instâncias running e tag do cluster correspondente. Aplica endpoint habilitado, tokens obrigatórios e hop limit `2`, confirmando o estado aplicado; consulta ou alteração negada interrompe a esteira. Destroy não executa essa etapa. Não altera IAM/trust, não lê credenciais IMDS e não copia secrets do runner para Pods.
+
+A configuração operacional é por instância, fora do plano Terraform, e não muda o launch template gerenciado pelo EKS. Não cria template próprio nem substitui o node group existente. Uma instância substituída posteriormente pode voltar ao padrão: reexecutar a esteira Kubernetes antes de validar o runtime remoto e conferir novamente os valores reais. Este é um limite explícito da exceção acadêmica, não uma configuração durável de novos nodes.
+
+O PR não executa a alteração AWS: `AWS_DEPLOY_ENABLED=false` permanece até a janela autorizada, após merge de Gabriel. O apply parcial do Execução mantém seu state; a correção não recria tabela ou filas e ainda exige nova validação de identidade e acesso DynamoDB/SQS pelo Pod. Healthcheck não comprova essas permissões.
+
 Após a validação real da VPC em 11/11/2026, o retorno do controle a `apply` prepara a próxima etapa da plataforma. `AWS_DEPLOY_ENABLED=false` permanece no repositório; o merge não provisiona EKS/ECR nem instala Datadog. A execução exige janela autorizada e credenciais/dependências reconferidas.
 
 A revisão corrigiu no job de aplicação a restauração do cache para ocorrer antes da validação do state, preparação de destroy e terraform init, seguindo o mesmo padrão da VPC/Execução. A chave continua isolada por conta; o cache e o state não são editados/apagados. O teste inline do CI confere a ordem nos dois jobs. Não acrescenta arquivo ou pasta de scripts.

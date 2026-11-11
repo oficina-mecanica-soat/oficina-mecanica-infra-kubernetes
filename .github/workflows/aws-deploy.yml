@@ -357,6 +357,62 @@ jobs:
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate.backup
           key: tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-${{ github.run_id }}
 
+      - name: "🛡️ Ajustar IMDSv2 da identidade acadêmica nos nodes atuais"
+        if: env.TERRAFORM_ACTION == 'apply'
+        run: |
+          node <<'CONFIGURAR_IMDS_ACADEMICO'
+          const cp = require('node:child_process');
+          const consultar = (...args) => JSON.parse(cp.execFileSync('aws', [...args, '--output', 'json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+          function validarGrupo(grupo, conta) {
+            if (grupo.status !== 'ACTIVE' || grupo.nodeRole !== `arn:aws:iam::${conta}:role/LabRole`)
+              throw new Error('Exceção IMDS aceita somente para node group ACTIVE com LabRole da conta atual.');
+            const nomes = grupo.resources?.autoScalingGroups?.map(item => item.name);
+            if (!nomes?.length || nomes.some(nome => !nome)) throw new Error('Auto Scaling Groups do node group ausentes.');
+            return nomes;
+          }
+          function validarInstancias(grupos, nomes, instancias, cluster) {
+            if (grupos.length !== nomes.length || grupos.some(grupo => !nomes.includes(grupo.AutoScalingGroupName)))
+              throw new Error('Inventário de Auto Scaling Groups divergente.');
+            const ids = grupos.flatMap(grupo => grupo.Instances || []).map(item => item.InstanceId);
+            if (!ids.length || new Set(ids).size !== ids.length || instancias.length !== ids.length
+              || new Set(instancias.map(item => item.InstanceId)).size !== ids.length
+              || instancias.some(item => !ids.includes(item.InstanceId) || item.State?.Name !== 'running'
+                || !item.Tags?.some(tag => tag.Key === 'eks:cluster-name' && tag.Value === cluster)
+                || item.MetadataOptions?.HttpEndpoint !== 'enabled'))
+              throw new Error('Inventário dos nodes incompleto, incompatível ou fora do cluster.');
+            return ids;
+          }
+          function conferir(opcoes) {
+            return opcoes?.State === 'applied' && opcoes.HttpEndpoint === 'enabled'
+              && opcoes.HttpTokens === 'required' && opcoes.HttpPutResponseHopLimit === 2;
+          }
+          async function main() {
+            const tf = nome => cp.execFileSync('terraform', [`-chdir=${process.env.TF_WORKING_DIRECTORY}`, 'output', '-raw', nome], { encoding: 'utf8' }).trim();
+            const cluster = tf('eks_cluster_name');
+            const grupo = consultar('eks', 'describe-nodegroup', '--cluster-name', cluster, '--nodegroup-name', tf('eks_node_group_name')).nodegroup;
+            const nomes = validarGrupo(grupo, consultar('sts', 'get-caller-identity').Account);
+            const grupos = consultar('autoscaling', 'describe-auto-scaling-groups', '--auto-scaling-group-names', ...nomes).AutoScalingGroups;
+            const ids = grupos.flatMap(item => item.Instances || []).map(item => item.InstanceId);
+            if (!ids.length) throw new Error('Nenhum node disponível para configurar.');
+            const listar = () => consultar('ec2', 'describe-instances', '--instance-ids', ...ids).Reservations.flatMap(item => item.Instances);
+            validarInstancias(grupos, nomes, listar(), cluster);
+            for (const id of ids) consultar('ec2', 'modify-instance-metadata-options', '--instance-id', id,
+              '--http-endpoint', 'enabled', '--http-tokens', 'required', '--http-put-response-hop-limit', '2');
+            for (let tentativa = 0; tentativa < 30; tentativa++) {
+              const atuais = listar();
+              validarInstancias(grupos, nomes, atuais, cluster);
+              if (atuais.every(item => conferir(item.MetadataOptions))) {
+                console.log(`IMDSv2 obrigatório e hop limit 2 confirmados em ${ids.length} node(s) do grupo acadêmico.`);
+                return;
+              }
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            throw new Error('Configuração IMDSv2 não foi confirmada no prazo.');
+          }
+          if (!module.parent) main().catch(error => { console.error(error.message); process.exitCode = 1; });
+          module.exports = { validarGrupo, validarInstancias, conferir };
+          CONFIGURAR_IMDS_ACADEMICO
+
       - name: "🔎 09 · Validar Kubernetes real após apply"
         if: env.TERRAFORM_ACTION == 'apply'
         run: |
