@@ -222,3 +222,13 @@ A revisão corrigiu no job de aplicação a restauração do cache para ocorrer 
 O futuro apply utiliza a configuração existente: EKS, managed node group nas subnets privadas, ECRs da API e Execução, NLB interno com seus recursos de ingresso e contratos SSM. O CD existente chama em seguida o workflow especializado de Datadog, com Agent e Cluster Agent. Não cria nova role IAM ou workload da aplicação, não provisiona RDS/Gateway e não altera topologia, nomes, versões ou regras dos módulos.
 
 A VPC deve continuar `ready` e publicar os contratos esperados. As roles existentes do laboratório e a chave Datadog configurada precisam funcionar na execução real; testes locais não comprovam IAM, conectividade, admissão do tracer ou ingestão de telemetria. O status de infraestrutura não prova a Saga ou os serviços. Gabriel faz o merge e autoriza separadamente o provisionamento dessa etapa.
+
+## Bloqueio de operação AWS — AUD-001
+
+`AWS_DEPLOY_ENABLED` deve existir no nível do repositório e permanecer `false` enquanto o laboratório estiver offline. Ausente, vazio ou diferente de `true` bloqueia a operação. O caller exige a habilitação antes de chamar o deploy; o workflow reutilizável repete a conferência no Environment e aceita operação física somente em `develop`/`development`, antes de resolver a ação e acessar AWS. Um override no Environment não substitui a habilitação do caller.
+
+A entrada manual e a chamada automática do Datadog usam a mesma trava: o job é pulado sem habilitação ou fora de `develop`, e a primeira etapa confere novamente a flag antes de configurar credenciais ou instalar/atualizar o Agent. O deploy Terraform mantém sua trava existente, agora com conferência de ref/ambiente.
+
+Habilitar a variável não autoriza operação por si só: ainda exige janela combinada com Gabriel, laboratório/credenciais atuais, dependências e os guardrails existentes de plano salvo/state e destroy dedicado. Não altera JWT, rotas, recursos, contratos SSM ou `terraform-action.env`. Merge de código não implanta.
+
+O CI executa a barreira real com flags ausentes/inválidas, branches/tags e ambientes indevidos, além do caso positivo, sem credenciais ou comandos AWS. Testes e validações ficam inline nos workflows existentes, sem novas pastas de scripts. Nesta rodada, integrar somente em `develop`; Gabriel realiza o merge. Não promover release/main ou abrir nova janela de laboratório para este ajuste.

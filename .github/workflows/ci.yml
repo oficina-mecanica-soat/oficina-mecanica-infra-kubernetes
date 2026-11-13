@@ -135,6 +135,65 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
+      - name: "🧪 Validar bloqueio de AWS sem laboratório"
+        run: |
+          node <<'TESTAR_BLOQUEIO_AWS'
+          const fs = require('node:fs');
+          const cp = require('node:child_process');
+          const assert = require('node:assert/strict');
+          const ler = nome => fs.readFileSync('.github/workflows/' + nome, 'utf8').replace(/\r\n/g, '\n');
+          const deploy = ler('aws-deploy.yml');
+          const cd = ler('cd-development.yml');
+          const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
+          const gate = texto => {
+            const bloco = texto.match(/      - name: "🛡️ Conferir habilitação do deploy AWS"\n([\s\S]*?)(?=      - name:|$)/);
+            assert(bloco, 'Barreira de AWS ausente.');
+            assert(bloco[1].includes('DEPLOY_ENABLED: \u0024{{ vars.AWS_DEPLOY_ENABLED }}'));
+            const script = bloco[1].split('        run: |\n')[1];
+            assert(script, 'Validação executável ausente.');
+            return script.split('\n').map(l => l.slice(10)).join('\n').trim();
+          };
+          function conferirBloqueio(texto) {
+            const script = gate(texto);
+            function executar(flag, ref = 'refs/heads/develop', ambiente = 'development') {
+              const env = { ...process.env, GITHUB_REF: ref, DEPLOY_ENVIRONMENT: ambiente };
+              delete env.DEPLOY_ENABLED;
+              if (flag !== undefined) env.DEPLOY_ENABLED = flag;
+              const resultado = cp.spawnSync(bash, ['-e', '-c', script], { env, encoding: 'utf8' });
+              assert.ifError(resultado.error);
+              return resultado.status;
+            }
+            for (const valor of [undefined, '', 'false', 'TRUE', 'true ']) {
+              assert.notEqual(executar(valor), 0, 'Valor deve bloquear: ' + valor);
+            }
+            assert.equal(executar('true'), 0);
+            for (const ref of ['refs/heads/main', 'refs/heads/release', 'refs/heads/feature/teste', 'refs/tags/develop']) {
+              assert.notEqual(executar('true', ref), 0, 'Ref indevida deve bloquear.');
+            }
+            assert.notEqual(executar('true', 'refs/heads/develop', 'production'), 0);
+            assert.notEqual(executar('true', 'refs/heads/develop', ''), 0);
+          }
+          conferirBloqueio(deploy);
+          assert(deploy.includes('DEPLOY_ENVIRONMENT: \u0024{{ inputs.environment_name }}'), 'Barreira deve conferir o Environment solicitado.');
+          assert(deploy.indexOf('🛡️ Conferir habilitação do deploy AWS') < deploy.indexOf('id: resolve'), 'Resolver ação somente após a barreira.');
+          for (const nome of ['prepare_and_plan', 'apply_or_destroy']) {
+            const job = deploy.split('\n  ' + nome + ':')[1]?.split(/\n  [a-z_]+:/)[0];
+            assert(job && /needs:[\s\S]*?resolve_action/.test(job), 'Job AWS deve depender da barreira.');
+          }
+          if (fs.existsSync('.github/workflows/datadog-observability.yml')) {
+            const datadog = ler('datadog-observability.yml');
+            conferirBloqueio(datadog);
+            const job = datadog.split('\n  deploy-datadog:')[1];
+            assert(job.includes("if: vars.AWS_DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/develop'"));
+            assert(datadog.indexOf('🛡️ Conferir habilitação do deploy AWS') < datadog.indexOf('aws-actions/configure-aws-credentials'), 'Datadog deve bloquear antes das credenciais.');
+            assert(cd.includes("vars.AWS_DEPLOY_ENABLED == 'true'"), 'Caller do Datadog deve preservar a barreira.');
+          } else {
+            const job = cd.split('\n  deploy-development:')[1].split('\n  open-pr-to-release:')[0];
+            assert(job.includes("if: needs.detect-deploy-scope.outputs.deploy_required == 'true' && vars.AWS_DEPLOY_ENABLED == 'true'"), 'Caller deve exigir flag e mudança implantável.');
+          }
+          console.log('Barreira AWS: ausência/false bloqueiam; true exige develop/development; caller e callee protegidos, sem consulta AWS.');
+          TESTAR_BLOQUEIO_AWS
+
       - name: "🧪 Validar recuperação segura de destroy"
         run: node --test .github/scripts/*.test.cjs
 

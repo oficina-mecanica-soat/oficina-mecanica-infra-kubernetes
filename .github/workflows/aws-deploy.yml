@@ -39,7 +39,11 @@ jobs:
       - name: "🛡️ Conferir habilitação do deploy AWS"
         env:
           DEPLOY_ENABLED: ${{ vars.AWS_DEPLOY_ENABLED }}
-        run: test "$DEPLOY_ENABLED" = true
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment_name }}
+        run: |
+          test "$DEPLOY_ENABLED" = true
+          test "$GITHUB_REF" = refs/heads/develop
+          test "$DEPLOY_ENVIRONMENT" = development
 
       - name: "🚦 02 · Ler terraform-action.env e validar troca segura de destroy"
         id: resolve_terraform_action
