@@ -380,6 +380,9 @@ jobs:
           const match = workflow.match(/        run: \|\r?\n([\s\S]*?)\r?\n  deploy-development:/);
           assert.ok(match);
           const script = match[1].split(/\r?\n/).map(linha => linha.slice(10)).join('\n');
+          const caminhos = nome => JSON.parse(workflow.match(new RegExp(nome + ': >-\\r?\\n((?:    [^\\n]*\\r?\\n)+)'))[1]);
+          const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
+          const temporarios = process.env.RUNNER_TEMP || os.tmpdir();
           for (const [arquivo, terraform, datadog] of [
             ['infra/terraform/environments/dev/main.tf', true, false],
             ['.github/workflows/aws-deploy.yml', true, false],
@@ -389,7 +392,7 @@ jobs:
             ['.github/workflows/ci.yml', false, false],
             ['README.md', false, false]
           ]) {
-            const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'detector-aws-'));
+            const dir = fs.mkdtempSync(path.join(temporarios, 'detector-aws-'));
             try {
               const git = (...args) => cp.execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
               git('init', '-q'); git('config', 'user.name', 'Teste'); git('config', 'user.email', 'teste@example.invalid');
@@ -398,12 +401,19 @@ jobs:
               fs.mkdirSync(path.dirname(path.join(dir, arquivo)), { recursive: true });
               fs.writeFileSync(path.join(dir, arquivo), 'teste');
               git('add', '.'); git('commit', '-qm', 'mudanca');
-              cp.execFileSync('bash', ['-e', '-o', 'pipefail', '-c', script], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
-                env: { ...process.env, GITHUB_BEFORE: before, GITHUB_SHA: git('rev-parse', 'HEAD'), GITHUB_OUTPUT: 'saida' } });
+              cp.execFileSync(bash, ['-e', '-o', 'pipefail', '-c', script], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
+                env: {
+                  ...process.env, GITHUB_BEFORE: before, GITHUB_SHA: git('rev-parse', 'HEAD'), GITHUB_OUTPUT: 'saida',
+                  DEPLOYABLE_PATHS: JSON.stringify(caminhos('DEPLOYABLE_PATHS')),
+                  DATADOG_DEPLOYABLE_PATHS: JSON.stringify(caminhos('DATADOG_DEPLOYABLE_PATHS'))
+                } });
               const saida = fs.readFileSync(path.join(dir, 'saida'), 'utf8');
               assert.ok(saida.includes(`terraform_deploy_required=${terraform}\n`), arquivo);
               assert.ok(saida.includes(`datadog_deploy_required=${datadog}\n`), arquivo);
-            } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+            } finally {
+              assert.equal(path.dirname(fs.realpathSync(dir)), fs.realpathSync(temporarios));
+              fs.rmSync(dir, { recursive: true, force: true });
+            }
           }
           console.log('Detector real validado: Terraform/workflows AWS, Datadog e alterações sem deploy.');
           VALIDAR_DETECTOR_AWS
