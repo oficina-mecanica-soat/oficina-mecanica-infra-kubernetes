@@ -7,6 +7,7 @@ on:
       - develop
 
 permissions:
+  actions: read
   contents: write
   pull-requests: write
 
@@ -16,6 +17,18 @@ concurrency:
 
 env:
   RELEASE_BRANCH: ${{ vars.RELEASE_BRANCH || 'release' }}
+  DEPLOYABLE_PATHS: >-
+    [
+      "infra/terraform",
+      ".github/workflows/aws-deploy.yml",
+      ".github/workflows/cd-development.yml"
+    ]
+
+  DATADOG_DEPLOYABLE_PATHS: >-
+    [
+      "observability/datadog",
+      ".github/workflows/datadog-observability.yml"
+    ]
 
 jobs:
   detect-deploy-scope:
@@ -36,46 +49,27 @@ jobs:
         env:
           GITHUB_BEFORE: ${{ github.event.before }}
         run: |
-          terraform_deploy_required=false
-          datadog_deploy_required=false
-          head_sha="$GITHUB_SHA"
-          base_sha="$GITHUB_BEFORE"
-
-          if [ -n "$base_sha" ] && [ "$base_sha" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$base_sha^{commit}" 2>/dev/null; then
-            base_ref="$base_sha"
-          elif git rev-parse HEAD~1 >/dev/null 2>&1; then
-            base_ref="HEAD~1"
-          else
-            base_ref="$head_sha"
-          fi
-
-          changed_files="$(mktemp)"
-          git diff --name-only "$base_ref" "$head_sha" > "$changed_files"
-
-          if [ -s "$changed_files" ]; then
-            echo "Files changed in the current push from $base_ref to $head_sha:"
-            cat "$changed_files"
-
-            while IFS= read -r file; do
-              case "$file" in
-                infra/terraform/*|.github/workflows/aws-deploy.yml|.github/workflows/cd-development.yml)
-                  echo "Terraform deployable change detected: $file"
-                  terraform_deploy_required=true
-                  ;;
-                observability/datadog/*|.github/workflows/datadog-observability.yml)
-                  echo "Datadog deployable change detected: $file"
-                  datadog_deploy_required=true
-                  ;;
-                *)
-                  ;;
-              esac
-            done < "$changed_files"
-          fi
-
-          echo "terraform_deploy_required=$terraform_deploy_required" >> "$GITHUB_OUTPUT"
-          echo "datadog_deploy_required=$datadog_deploy_required" >> "$GITHUB_OUTPUT"
-          echo "Terraform deploy required: $terraform_deploy_required"
-          echo "Datadog deploy required: $datadog_deploy_required"
+          node <<'DETECTAR_DEPLOY'
+          const cp = require('node:child_process');
+          const fs = require('node:fs');
+          const git = args => cp.execFileSync('git', args, { encoding: 'utf8' }).trim();
+          const existe = ref => cp.spawnSync('git', ['cat-file', '-e', ref + '^{commit}']).status === 0;
+          const head = process.env.GITHUB_SHA;
+          const anterior = process.env.GITHUB_BEFORE;
+          const base = anterior && !/^0+$/.test(anterior) && existe(anterior)
+            ? anterior
+            : existe(head + '~1') ? head + '~1' : head;
+          const grupos = {
+            terraform_deploy_required: JSON.parse(process.env.DEPLOYABLE_PATHS),
+            datadog_deploy_required: JSON.parse(process.env.DATADOG_DEPLOYABLE_PATHS)
+          };
+          for (const [saida, caminhos] of Object.entries(grupos)) {
+            const alterados = git(['diff', '--name-only', base, head, '--', ...caminhos]);
+            const necessario = alterados.length > 0;
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, saida + '=' + necessario + '\n');
+            console.log(saida + ': ' + necessario);
+          }
+          DETECTAR_DEPLOY
 
   deploy-development:
     name: "☁️ 02 · Deploy em development"
@@ -130,6 +124,89 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: "🔎 Conferir conteúdo cumulativo antes da promoção"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOY_RESULT: ${{ needs.deploy-development.result }}
+          DATADOG_RESULT: ${{ needs.deploy-datadog.result }}
+        run: |
+          node <<'VALIDAR_PROMOCAO_CUMULATIVA'
+          function validarPromocao({ git, consultar, caminhos, base, head, resultadoAtual, acaoAtual,
+            historicoCaminhos = caminhos, nomeJob = '☁️ 02 · Deploy em development / ☁️ 03 · Aplicar ou destruir Kubernetes' }) {
+            const alterados = git(['diff', '--name-only', base, head, '--', ...caminhos]).trim();
+            if (!alterados) return 'SEM_ALTERACAO_IMPLANTAVEL';
+
+            if (resultadoAtual === 'success' && ['apply', 'destroy'].includes(acaoAtual)) {
+              return 'OPERACAO_ATUAL_CONFIRMADA';
+            }
+
+            // O primeiro parent identifica o push em develop, inclusive após merge de feature.
+            const commit = git(['log', '--first-parent', '-1', '--format=%H', head, '--', ...historicoCaminhos]).trim();
+            if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('Commit implantável não identificado.');
+
+            const paginas = consultar('actions/workflows/cd-development.yml/runs?branch=develop&event=push&head_sha=' + commit + '&per_page=100');
+            if (!Array.isArray(paginas) || paginas.some(p => !Array.isArray(p.workflow_runs))) {
+              throw new Error('Histórico de CD inválido.');
+            }
+
+            const execucao = paginas.flatMap(p => p.workflow_runs)
+              .filter(r => r.head_sha === commit && r.head_branch === 'develop' && r.event === 'push')
+              .sort((a, b) => b.id - a.id)[0];
+            if (!execucao || execucao.status !== 'completed' || execucao.conclusion !== 'success' ||
+                !Number.isSafeInteger(execucao.id) || !Number.isSafeInteger(execucao.run_attempt) || execucao.run_attempt < 1) {
+              throw new Error('Conteúdo implantável pendente sem CD concluído com sucesso.');
+            }
+
+            // Usar a tentativa atual; sucesso de uma tentativa antiga não cobre um rerun falho.
+            const tentativas = consultar('actions/runs/' + execucao.id + '/attempts/' + execucao.run_attempt + '/jobs?per_page=100');
+            if (!Array.isArray(tentativas) || tentativas.some(p => !Array.isArray(p.jobs))) {
+              throw new Error('Jobs do CD inválidos.');
+            }
+
+            const aplicacoes = tentativas.flatMap(p => p.jobs).filter(j =>
+              j.name === nomeJob);
+            if (nomeJob.includes('Observabilidade Datadog') && aplicacoes.length === 1 && aplicacoes[0].conclusion === 'skipped') {
+              const terraform = tentativas.flatMap(p => p.jobs).filter(j => j.name === '☁️ 02 · Deploy em development / ☁️ 03 · Aplicar ou destruir Kubernetes');
+              const controle = git(['show', commit + ':infra/terraform/environments/dev/terraform-action.env']);
+              if (terraform.length === 1 && terraform[0].conclusion === 'success' &&
+                  /^TERRAFORM_ACTION=destroy\s*$/m.test(controle)) return 'REMOCAO_ANTERIOR_CONFIRMADA';
+            }
+            if (aplicacoes.length !== 1 || aplicacoes[0].conclusion !== 'success') {
+              throw new Error('CD sem aplicação/destroy confirmado; documentação não libera código pendente.');
+            }
+
+            return 'OPERACAO_ANTERIOR_CONFIRMADA';
+          }
+
+          // Execução no runner: erros de Git/GitHub bloqueiam a promoção.
+          const cp = require('node:child_process');
+          const git = args => cp.execFileSync('git', args, { encoding: 'utf8' });
+          const caminhos = JSON.parse(process.env.DEPLOYABLE_PATHS);
+          const release = 'refs/remotes/origin/' + process.env.RELEASE_BRANCH;
+          const referencia = cp.spawnSync('git', ['show-ref', '--verify', '--quiet', release]);
+          if (![0, 1].includes(referencia.status)) throw new Error('Não foi possível consultar a referência release.');
+          const base = referencia.status === 0 ? release : 'refs/remotes/origin/main';
+          const consultar = endpoint => JSON.parse(cp.execFileSync('gh', [
+            'api', '--paginate', '--slurp', 'repos/' + process.env.GITHUB_REPOSITORY + '/' + endpoint
+          ], { encoding: 'utf8' }));
+          const resultado = validarPromocao({
+            git, consultar, caminhos, base, head: process.env.GITHUB_SHA,
+            resultadoAtual: process.env.DEPLOY_RESULT, acaoAtual: process.env.TERRAFORM_ACTION
+          });
+          console.log('Conferência cumulativa de Terraform: ' + resultado);
+          if (process.env.DEPLOY_RESULT === 'success' && process.env.TERRAFORM_ACTION === 'destroy') {
+            console.log('Destroy atual confirmado; Datadog não deve ser reinstalado.');
+          } else {
+            const datadog = JSON.parse(process.env.DATADOG_DEPLOYABLE_PATHS);
+            const observabilidade = validarPromocao({
+              git, consultar, caminhos: datadog, historicoCaminhos: [...caminhos, ...datadog], base,
+              head: process.env.GITHUB_SHA, resultadoAtual: process.env.DATADOG_RESULT, acaoAtual: 'apply',
+              nomeJob: '🐕 03 · Observabilidade Datadog / ☁️ Instalar ou atualizar observabilidade'
+            });
+            console.log('Conferência cumulativa de Datadog: ' + observabilidade);
+          }
+          VALIDAR_PROMOCAO_CUMULATIVA
 
       - name: "🔀 02 · Criar ou manter PR para release"
         env:
