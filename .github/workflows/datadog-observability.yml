@@ -23,11 +23,21 @@ env:
 jobs:
   deploy-datadog:
     name: "☁️ Instalar ou atualizar observabilidade"
+    if: vars.AWS_DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     environment:
       name: development
 
     steps:
+      - name: "🛡️ Conferir habilitação do deploy AWS"
+        env:
+          DEPLOY_ENABLED: ${{ vars.AWS_DEPLOY_ENABLED }}
+          DEPLOY_ENVIRONMENT: development
+        run: |
+          test "$DEPLOY_ENABLED" = true
+          test "$GITHUB_REF" = refs/heads/develop
+          test "$DEPLOY_ENVIRONMENT" = development
+
       - name: "📥 01 · Baixar código do repositório"
         uses: actions/checkout@v7
 
