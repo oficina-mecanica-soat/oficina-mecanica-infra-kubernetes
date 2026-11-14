@@ -92,6 +92,12 @@ resource "aws_ssm_parameter" "status" {
   # Publicar ready somente após concluir a infraestrutura e seus contratos SSM.
   depends_on = [
     module.eks,
+    aws_lb_listener.microsservicos_internal,
+    aws_autoscaling_attachment.microsservicos_internal,
+    aws_vpc_security_group_ingress_rule.nodes_from_microsservicos_nlb,
+    aws_vpc_security_group_egress_rule.nlb_to_microsservicos,
+    aws_ssm_parameter.microsservicos_internal_node_port,
+    aws_ssm_parameter.microsservicos_internal_nlb_listener_arn,
     module.ecr,
     module.ecr_execucao,
     module.ecr_orcamento_pagamento,

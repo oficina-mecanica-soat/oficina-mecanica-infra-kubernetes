@@ -485,6 +485,40 @@ jobs:
 
           echo "Kubernetes infrastructure validated successfully in AWS and SSM."
 
+      - name: "🔎 Validar ingressos privados e contratos dos serviços"
+        if: env.TERRAFORM_ACTION == 'apply'
+        run: |
+          node <<'VALIDAR_INGRESSOS_PRIVADOS'
+          function validarIngressos(contratos,conta,regiao,prefixo,consultar) {
+            const portas={execucao:[30081,8081],orcamento_pagamento:[30082,8082]};
+            if(!contratos||Object.keys(contratos).sort().join(',')!==Object.keys(portas).sort().join(','))throw Error('Contratos de ingresso incompletos.');
+            for(const [servico,c]of Object.entries(contratos)) {
+              if(c.node_port!==portas[servico][0]||c.listener_port!==portas[servico][1])throw Error('Portas contratuais divergentes.');
+              const base='arn:aws:elasticloadbalancing:'+regiao+':'+conta+':';
+              if(!c.listener_arn.startsWith(base+'listener/net/')||!c.target_group_arn.startsWith(base+'targetgroup/')||!c.nlb_arn.startsWith(base+'loadbalancer/net/'))throw Error('Ingresso pertence a outra conta, região ou tipo.');
+              const lb=consultar('elbv2','describe-load-balancers','--load-balancer-arns',c.nlb_arn).LoadBalancers;
+              if(!Array.isArray(lb)||lb.length!==1||lb[0].Scheme!=='internal'||lb[0].Type!=='network'||lb[0].LoadBalancerArn!==c.nlb_arn)throw Error('NLB não é o ingresso privado esperado.');
+              const ls=consultar('elbv2','describe-listeners','--listener-arns',c.listener_arn).Listeners;
+              if(!Array.isArray(ls)||ls.length!==1||ls[0].ListenerArn!==c.listener_arn||ls[0].LoadBalancerArn!==c.nlb_arn||ls[0].Port!==c.listener_port||ls[0].Protocol!=='TCP'||ls[0].DefaultActions?.length!==1||ls[0].DefaultActions[0].Type!=='forward'||ls[0].DefaultActions[0].TargetGroupArn!==c.target_group_arn)throw Error('Listener não aponta ao owner esperado.');
+              const ts=consultar('elbv2','describe-target-groups','--target-group-arns',c.target_group_arn).TargetGroups;
+              if(!Array.isArray(ts)||ts.length!==1||ts[0].TargetGroupArn!==c.target_group_arn||ts[0].Port!==c.node_port||ts[0].Protocol!=='TCP'||ts[0].TargetType!=='instance'||ts[0].VpcId!==lb[0].VpcId)throw Error('Target group diverge do NodePort ou da VPC.');
+              for(const [sufixo,valor]of [['internal_node_port',String(c.node_port)],['internal_nlb_listener_arn',c.listener_arn]]) {
+                const p=consultar('ssm','get-parameter','--name',prefixo+'/'+servico+'_'+sufixo).Parameter;
+                if(p?.Type!=='String'||p.Value!==valor)throw Error('Contrato SSM diverge do ingresso real.');
+              }
+              const regras=consultar('ec2','describe-security-group-rules','--filters','Name=group-id,Values='+c.node_security_group_id).SecurityGroupRules;
+              if(!Array.isArray(regras)||!regras.some(r=>r.IsEgress===false&&r.IpProtocol==='tcp'&&r.FromPort===c.node_port&&r.ToPort===c.node_port&&r.ReferencedGroupInfo?.GroupId===c.nlb_security_group_id))throw Error('Regra privada NLB para NodePort não confirmada.');
+            }
+          }
+          // Execução no runner: somente consultas; falhas não equivalem a ausência.
+          const cp=require('node:child_process');
+          const run=(cmd,args)=>JSON.parse(cp.execFileSync(cmd,args,{encoding:'utf8',stdio:['ignore','pipe','pipe']}));
+          const contratos=run('terraform',['-chdir='+process.env.TF_WORKING_DIRECTORY,'output','-json','microsservicos_private_ingress']);
+          const conta=run('aws',['sts','get-caller-identity','--output','json']).Account;
+          validarIngressos(contratos,conta,process.env.AWS_REGION,process.env.SSM_KUBERNETES_PREFIX,(...args)=>run('aws',[...args,'--region',process.env.AWS_REGION,'--output','json']));
+          console.log('Ingressos privados e contratos confirmados; não comprova workload ou fluxo de negócio.');
+          VALIDAR_INGRESSOS_PRIVADOS
+
       - name: "🔎 09 · Validar remoção real após destroy"
         if: env.TERRAFORM_ACTION == 'destroy'
         run: |
@@ -501,7 +535,7 @@ jobs:
             else
               local command_status=$?
               case "$command_output" in
-                *ResourceNotFoundException*|*RepositoryNotFoundException*|*ParameterNotFound*)
+                *ResourceNotFoundException*|*RepositoryNotFoundException*|*ParameterNotFound*|*"(LoadBalancerNotFound)"*|*"(TargetGroupNotFound)"*)
                   echo "${resource_label} is absent after destroy."
                   return 0
                   ;;
@@ -545,5 +579,15 @@ jobs:
           assert_resource_absent "Contrato SSM ECR Orçamento/Pagamento (URL)" aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/orcamento_pagamento_ecr_repository_url" --query Parameter.Value --output text
 
           assert_resource_absent "Kubernetes status parameter $SSM_KUBERNETES_STATUS_PARAMETER" aws ssm get-parameter --name "$SSM_KUBERNETES_STATUS_PARAMETER" --query 'Parameter.Value' --output text
+
+          assert_resource_absent "NLB privado" aws elbv2 describe-load-balancers --names oficina-mecanica-api-nlb-dev
+          for target_group in oficina-execucao-tg-dev oficina-orcamento-tg-dev; do
+            assert_resource_absent "Target group $target_group" aws elbv2 describe-target-groups --names "$target_group"
+          done
+          for owner in execucao orcamento_pagamento; do
+            for suffix in internal_node_port internal_nlb_listener_arn; do
+              assert_resource_absent "Contrato privado $owner/$suffix" aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/${owner}_${suffix}"
+            done
+          done
 
           echo "Kubernetes resources removed and SSM status cleaned."
