@@ -483,6 +483,49 @@ jobs:
           console.log('Detector real validado: Terraform/workflows AWS, Datadog e alterações sem deploy.');
           VALIDAR_DETECTOR_AWS
 
+      - name: "🛡️ Validar ciclo do registry de Orçamento/Pagamento"
+        run: |
+          node <<'VALIDAR_REGISTRY_ORCAMENTO'
+          const fs=require('node:fs'),assert=require('node:assert/strict');
+          const y=fs.readFileSync('.github/workflows/aws-deploy.yml','utf8').replace(/\r/g,'');
+          for(const nome of ['execucao','orcamento_pagamento']) {
+            assert(y.includes(nome+'_ecr_repository_name_before_destroy:'));
+            assert(y.includes(nome.toUpperCase()+'_ECR_REPOSITORY_NAME_BEFORE_DESTROY:'));
+            for(const sufixo of ['name','url']) {
+              assert(y.includes('test "$(aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/'+nome+'_ecr_repository_'+sufixo+'"'));
+              assert(y.includes('assert_resource_absent "Contrato SSM ECR '+(nome==='execucao'?'Execução':'Orçamento/Pagamento')+(sufixo==='name'?' (nome)':' (URL)')+'"'));
+            }
+          }
+          const modulo=fs.readFileSync('infra/terraform/modules/ecr/variables.tf','utf8');
+          assert(/variable "image_tag_mutability"[\s\S]*?default\s*=\s*"IMMUTABLE"/.test(modulo));
+          assert(/variable "scan_on_push"[\s\S]*?default\s*=\s*true/.test(modulo));
+          const ssm=fs.readFileSync('infra/terraform/environments/dev/ssm-parameters.tf','utf8');
+          const status=ssm.slice(ssm.indexOf('resource "aws_ssm_parameter" "status"'));
+          for(const dependencia of ['module.ecr_orcamento_pagamento,','aws_ssm_parameter.orcamento_pagamento_ecr_repository_name,','aws_ssm_parameter.orcamento_pagamento_ecr_repository_url,']) assert(status.includes(dependencia));
+          const cp=require('node:child_process');
+          const captura=y.split('        id: capture_destroy_context\n')[1]?.split('        run: |\n')[1]?.split('\n      - name:')[0];
+          assert(captura,'Captura real de destroy ausente.');
+          const shell=captura.split('\n').map(l=>l.slice(10)).join('\n');
+          const mocks=`
+          exec 3>&2
+          terraform() { printf '{}'; }
+          jq() { cat >/dev/null; case "$*" in *orcamento_pagamento_ecr_repository_name*) printf 'oficina-mecanica-orcamento-pagamento';; esac; }
+          aws() {
+            printf 'CONSULTA_ORCAMENTO\n' >&3
+            if [ "$RESPOSTA_ECR" = presente ]; then printf 'oficina-mecanica-orcamento-pagamento'; return 0; fi
+            if [ "$RESPOSTA_ECR" = ausente ]; then printf '(RepositoryNotFoundException)' >&2; return 254; fi
+            printf '(AccessDeniedException)' >&2; return 254
+          }
+          export GITHUB_OUTPUT=/dev/null TF_WORKING_DIRECTORY=teste
+          `;
+          for(const resposta of ['presente','ausente','negado']) {
+            const r=cp.spawnSync('bash',['-s'],{input:mocks+'\n'+shell,encoding:'utf8',env:{...process.env,RESPOSTA_ECR:resposta}});
+            assert((r.stderr||'').includes('CONSULTA_ORCAMENTO'),'Registry novo deve ser consultado mesmo sem outputs dos antigos.');
+            assert.equal(r.status===0,resposta!=='negado','Erro de acesso nunca equivale a ausência.');
+          }
+          console.log('Registry próprio, contratos, dependências e validação de apply/destroy preservados.');
+          VALIDAR_REGISTRY_ORCAMENTO
+
       - name: "🎨 03 · Verificar formatação Terraform"
         run: |
           terraform fmt -check -recursive infra/terraform
@@ -494,6 +537,9 @@ jobs:
       - name: "🔍 05 · Validar configuração Terraform"
         run: |
           terraform -chdir="$TF_WORKING_DIRECTORY" validate
+
+      - name: "🧪 06 · Validar contratos dos três registries sem AWS"
+        run: terraform -chdir="$TF_WORKING_DIRECTORY" test
 
   quality_gate:
     name: "🚦 03 · Quality gate"

@@ -37,3 +37,11 @@ module "ecr_execucao" {
 
   tags = local.common_tags
 }
+
+module "ecr_orcamento_pagamento" {
+  source = "../../modules/ecr"
+
+  name = var.orcamento_pagamento_ecr_repository_name
+
+  tags = local.common_tags
+}

@@ -106,6 +106,7 @@ jobs:
       cluster_name_before_destroy: ${{ steps.capture_destroy_context.outputs.cluster_name_before_destroy }}
       ecr_repository_name_before_destroy: ${{ steps.capture_destroy_context.outputs.ecr_repository_name_before_destroy }}
       execucao_ecr_repository_name_before_destroy: ${{ steps.capture_destroy_context.outputs.execucao_ecr_repository_name_before_destroy }}
+      orcamento_pagamento_ecr_repository_name_before_destroy: ${{ steps.capture_destroy_context.outputs.orcamento_pagamento_ecr_repository_name_before_destroy }}
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       EKS_CLUSTER_ROLE_NAME: ${{ vars.EKS_CLUSTER_ROLE_NAME || 'LabRole' }}
@@ -220,6 +221,7 @@ jobs:
           cluster_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -json | jq -r '.eks_cluster_name.value // empty')"
           ecr_repository_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -json | jq -r '.ecr_repository_name.value // empty')"
           execucao_ecr_repository_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -json | jq -r '.execucao_ecr_repository_name.value // empty')"
+          orcamento_pagamento_ecr_repository_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -json | jq -r '.orcamento_pagamento_ecr_repository_name.value // empty')"
 
           if [ -z "$cluster_name" ]; then
             echo "::warning::EKS output is absent from Terraform state. Continuing as partial destroy recovery."
@@ -260,9 +262,23 @@ jobs:
             fi
           fi
 
+          if [ -z "$orcamento_pagamento_ecr_repository_name" ]; then
+            echo "::warning::ECR output is absent from Terraform state. Continuing as partial destroy recovery."
+          else
+            if assert_resource_present_or_absent "ECR repository $orcamento_pagamento_ecr_repository_name" aws ecr describe-repositories --repository-names "$orcamento_pagamento_ecr_repository_name" --query 'repositories[0].repositoryName' --output text; then
+              :
+            else
+              inspection_status=$?
+              if [ "$inspection_status" -ne 10 ]; then
+                exit "$inspection_status"
+              fi
+            fi
+          fi
+
           echo "cluster_name_before_destroy=$cluster_name" >> "$GITHUB_OUTPUT"
           echo "ecr_repository_name_before_destroy=$ecr_repository_name" >> "$GITHUB_OUTPUT"
           echo "execucao_ecr_repository_name_before_destroy=$execucao_ecr_repository_name" >> "$GITHUB_OUTPUT"
+          echo "orcamento_pagamento_ecr_repository_name_before_destroy=$orcamento_pagamento_ecr_repository_name" >> "$GITHUB_OUTPUT"
           echo "Kubernetes destroy context captured when available."
 
       - name: "📐 10 · Gerar plano do Terraform (apply)"
@@ -295,6 +311,7 @@ jobs:
       CLUSTER_NAME_BEFORE_DESTROY: ${{ needs.prepare_and_plan.outputs.cluster_name_before_destroy }}
       ECR_REPOSITORY_NAME_BEFORE_DESTROY: ${{ needs.prepare_and_plan.outputs.ecr_repository_name_before_destroy }}
       EXECUCAO_ECR_REPOSITORY_NAME_BEFORE_DESTROY: ${{ needs.prepare_and_plan.outputs.execucao_ecr_repository_name_before_destroy }}
+      ORCAMENTO_PAGAMENTO_ECR_REPOSITORY_NAME_BEFORE_DESTROY: ${{ needs.prepare_and_plan.outputs.orcamento_pagamento_ecr_repository_name_before_destroy }}
 
     steps:
       - name: "📥 01 · Baixar código do repositório"
@@ -444,8 +461,15 @@ jobs:
           execucao_ecr_repository_url="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -raw execucao_ecr_repository_url)"
           actual_url="$(aws ecr describe-repositories --repository-names "$execucao_ecr_repository_name" --query 'repositories[0].repositoryUri' --output text)"
           test "$actual_url" = "$execucao_ecr_repository_url"
+
+          orcamento_pagamento_ecr_repository_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -raw orcamento_pagamento_ecr_repository_name)"
+          orcamento_pagamento_ecr_repository_url="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -raw orcamento_pagamento_ecr_repository_url)"
+          actual_url="$(aws ecr describe-repositories --repository-names "$orcamento_pagamento_ecr_repository_name" --query 'repositories[0].repositoryUri' --output text)"
+          test "$actual_url" = "$orcamento_pagamento_ecr_repository_url"
           test "$(aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/execucao_ecr_repository_name" --query Parameter.Value --output text)" = "$execucao_ecr_repository_name"
           test "$(aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/execucao_ecr_repository_url" --query Parameter.Value --output text)" = "$execucao_ecr_repository_url"
+          test "$(aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/orcamento_pagamento_ecr_repository_name" --query Parameter.Value --output text)" = "$orcamento_pagamento_ecr_repository_name"
+          test "$(aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/orcamento_pagamento_ecr_repository_url" --query Parameter.Value --output text)" = "$orcamento_pagamento_ecr_repository_url"
 
           ssm_cluster_name="$(aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/cluster_name" --query 'Parameter.Value' --output text)"
           if [ "$ssm_cluster_name" != "$cluster_name" ]; then
@@ -508,8 +532,17 @@ jobs:
             assert_resource_absent "ECR repository $EXECUCAO_ECR_REPOSITORY_NAME_BEFORE_DESTROY" aws ecr describe-repositories --repository-names "$EXECUCAO_ECR_REPOSITORY_NAME_BEFORE_DESTROY" --query 'repositories[0].repositoryName' --output text
           fi
 
+          if [ -z "$ORCAMENTO_PAGAMENTO_ECR_REPOSITORY_NAME_BEFORE_DESTROY" ]; then
+            echo "::warning::ECR output was absent before destroy; no repository identifier is available for post-destroy verification."
+          else
+            assert_resource_absent "ECR repository $ORCAMENTO_PAGAMENTO_ECR_REPOSITORY_NAME_BEFORE_DESTROY" aws ecr describe-repositories --repository-names "$ORCAMENTO_PAGAMENTO_ECR_REPOSITORY_NAME_BEFORE_DESTROY" --query 'repositories[0].repositoryName' --output text
+          fi
+
           assert_resource_absent "Contrato SSM ECR Execução (nome)" aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/execucao_ecr_repository_name" --query Parameter.Value --output text
           assert_resource_absent "Contrato SSM ECR Execução (URL)" aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/execucao_ecr_repository_url" --query Parameter.Value --output text
+
+          assert_resource_absent "Contrato SSM ECR Orçamento/Pagamento (nome)" aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/orcamento_pagamento_ecr_repository_name" --query Parameter.Value --output text
+          assert_resource_absent "Contrato SSM ECR Orçamento/Pagamento (URL)" aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/orcamento_pagamento_ecr_repository_url" --query Parameter.Value --output text
 
           assert_resource_absent "Kubernetes status parameter $SSM_KUBERNETES_STATUS_PARAMETER" aws ssm get-parameter --name "$SSM_KUBERNETES_STATUS_PARAMETER" --query 'Parameter.Value' --output text
 

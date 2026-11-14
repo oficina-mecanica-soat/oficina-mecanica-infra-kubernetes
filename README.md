@@ -10,7 +10,7 @@ Provisionar e operar a base Kubernetes da solução da Oficina Mecânica em AWS,
 
 - Criar o cluster EKS de `development`.
 - Criar o Managed Node Group.
-- Criar os repositórios ECR das imagens da API e do serviço de Execução.
+- Criar os repositórios ECR das imagens da API, Execução e Orçamento/Pagamento.
 - Consumir os outputs da VPC publicados no SSM Parameter Store.
 - Publicar outputs de Kubernetes e ECR no SSM para as próximas esteiras.
 - Controlar `apply` e `destroy` por workflow com validações reais na AWS.
@@ -79,6 +79,12 @@ Depois do apply, esta esteira publica:
 | `/oficina-mecanica/development/kubernetes/ecr_repository_url` | URL do ECR da API. |
 | `/oficina-mecanica/development/kubernetes/execucao_ecr_repository_name` | Nome do ECR do serviço de Execução: `oficina-mecanica-execucao`. |
 | `/oficina-mecanica/development/kubernetes/execucao_ecr_repository_url` | URL do ECR do serviço de Execução. |
+
+### ECR de Orçamento/Pagamento
+
+O módulo `ecr_orcamento_pagamento` reutiliza `modules/ecr`, preservando tags imutáveis, varredura no push e o ciclo acadêmico de destroy. O nome padrão é `oficina-mecanica-orcamento-pagamento`. Publica dois contratos String sob `/oficina-mecanica/development/kubernetes`: `orcamento_pagamento_ecr_repository_name` e `orcamento_pagamento_ecr_repository_url`, com outputs Terraform homônimos. O status compartilhado depende também desses recursos.
+
+A esteira confere registry, outputs e contratos após apply e comprova ausência após destroy, preservando bloqueio em erros de acesso. Não publica imagem nem implanta a aplicação; o consumidor é a esteira própria de Orçamento/Pagamento. Não renomeia recursos existentes de API ou Execução.
 
 ### ECR do Execução — contrato da Fase 4
 
