@@ -526,6 +526,73 @@ jobs:
           console.log('Registry próprio, contratos, dependências e validação de apply/destroy preservados.');
           VALIDAR_REGISTRY_ORCAMENTO
 
+      - name: "📊 Validar painel da Saga sem AWS ou Datadog"
+        run: |
+          node <<'VALIDAR_PAINEL'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const painel = JSON.parse(fs.readFileSync('observability/datadog/saga-dashboard.json', 'utf8'));
+          // Validação local do subconjunto utilizado; não substitui importação/ingestão reais.
+          const metricas = new Set([
+            'kubernetes_state.deployment.replicas_desired',
+            'kubernetes_state.deployment.replicas_available',
+            'aws.sqs.approximate_number_of_messages_visible',
+            'aws.sqs.approximate_number_of_messages_not_visible',
+            'aws.sqs.approximate_age_of_oldest_message'
+          ]);
+          function validar(dashboard) {
+            assert.equal(dashboard.layout_type, 'ordered');
+            assert.equal(dashboard.reflow_type, 'auto');
+            assert(dashboard.title && Array.isArray(dashboard.widgets) && dashboard.widgets.length > 0);
+            const texto = JSON.stringify(dashboard);
+            assert(!/default_zero|fill\(zero\)|api[_-]?key|app[_-]?key/i.test(texto), 'Não mascarar ausência de dados nem versionar credenciais.');
+            for (const { definition: widget } of dashboard.widgets) {
+              assert(['note', 'list_stream', 'timeseries'].includes(widget.type));
+              if (widget.type === 'note') {
+                assert(widget.content.includes('Sem dados não significa saudável'));
+                continue;
+              }
+              assert(widget.title && widget.requests.length > 0);
+              for (const request of widget.requests) {
+                if (widget.type === 'list_stream') {
+                  assert.equal(request.response_format, 'event_list');
+                  assert(['logs_stream', 'trace_stream'].includes(request.query.data_source));
+                  assert(request.query.query_string.includes('env:development'));
+                  for (const nome of ['api', 'execucao', 'orcamento-pagamento']) {
+                    assert(request.query.query_string.includes('oficina-mecanica-' + nome));
+                  }
+                  assert(request.columns.length > 0);
+                  for (const column of request.columns) {
+                    assert(column.field && ['auto', 'compact', 'full'].includes(column.width));
+                  }
+                } else {
+                  const consulta = /^max:([a-z_.]+)\{(.+)\} by \{([^}]+)\}$/.exec(request.q);
+                  assert(consulta && metricas.has(consulta[1]), 'Métrica fora das integrações nativas conferidas.');
+                  if (consulta[1].startsWith('aws.sqs.')) {
+                    for (const nome of ['api', 'execucao', 'orcamento-pagamento']) {
+                      assert(consulta[2].includes('queuename:oficina-mecanica-' + nome + '-development-dlq.fifo'));
+                    }
+                  } else {
+                    assert(consulta[2].includes('env:development'));
+                    assert(consulta[3].includes('kube_deployment'));
+                  }
+                }
+              }
+            }
+          }
+          validar(painel);
+          for (const alterar of [
+            p => { p.widgets.find(w => w.definition.type === 'timeseries').definition.requests[0].q = 'default_zero(max:inventada{*})'; },
+            p => { p.widgets.find(w => w.definition.type === 'timeseries').definition.requests[0].q = 'max:inventada{*} by {host}'; },
+            p => { p.widgets.find(w => w.definition.type === 'list_stream').definition.requests[0].query.query_string = 'env:production service:outro'; }
+          ]) {
+            const invalido = structuredClone(painel);
+            alterar(invalido);
+            assert.throws(() => validar(invalido));
+          }
+          console.log('Painel estruturalmente válido; ausência de telemetria não vira zero. Importação e ingestão pendentes.');
+          VALIDAR_PAINEL
+
       - name: "🎨 03 · Verificar formatação Terraform"
         run: |
           terraform fmt -check -recursive infra/terraform

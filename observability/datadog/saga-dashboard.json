@@ -1,0 +1,185 @@
+{
+  "title": "Oficina Mecânica — Saga, Execução e DLQ",
+  "description": "F4-11. Consultas derivadas da instrumentação existente e das integrações nativas. Importação e ingestão ainda precisam ser validadas; nenhum dado é convertido em zero para simular disponibilidade.",
+  "layout_type": "ordered",
+  "reflow_type": "auto",
+  "widgets": [
+    {
+      "definition": {
+        "type": "note",
+        "content": "## Oficina Mecânica — desenvolvimento\nFalhas de operação são tentativas técnicas, não contagens de Sagas fracassadas. Para investigar, abra o log e filtre por saga_id/ordem_servico_id. As colunas Properties preservam o JSON Serilog; confira o parsing na ingestão.\n\nSem dados não significa saudável. Réplicas disponíveis não comprovam /health nem o fluxo funcional. As métricas de DLQ exigem integração AWS/SQS habilitada e os nomes das filas conferidos; são aproximações. Traces exigem profiler, Agent e spans indexados. Não há limites de alerta definidos sem medição."
+      }
+    },
+    {
+      "definition": {
+        "title": "Falhas de processamento e publicação",
+        "type": "list_stream",
+        "requests": [
+          {
+            "response_format": "event_list",
+            "columns": [
+              {
+                "field": "timestamp",
+                "width": "compact"
+              },
+              {
+                "field": "service",
+                "width": "compact"
+              },
+              {
+                "field": "@Properties.saga_id",
+                "width": "compact"
+              },
+              {
+                "field": "@Properties.ordem_servico_id",
+                "width": "compact"
+              },
+              {
+                "field": "content",
+                "width": "full"
+              }
+            ],
+            "query": {
+              "data_source": "logs_stream",
+              "query_string": "env:development service:(oficina-mecanica-api OR oficina-mecanica-execucao OR oficina-mecanica-orcamento-pagamento) (@Properties.operation:* OR @operation:*) (@Properties.outcome:falha OR @outcome:falha)",
+              "sort": {
+                "column": "timestamp",
+                "order": "desc"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Operações da Saga e do Execução — investigação por IDs",
+        "type": "list_stream",
+        "requests": [
+          {
+            "response_format": "event_list",
+            "columns": [
+              {
+                "field": "timestamp",
+                "width": "compact"
+              },
+              {
+                "field": "service",
+                "width": "compact"
+              },
+              {
+                "field": "@Properties.saga_id",
+                "width": "compact"
+              },
+              {
+                "field": "@Properties.ordem_servico_id",
+                "width": "compact"
+              },
+              {
+                "field": "content",
+                "width": "full"
+              }
+            ],
+            "query": {
+              "data_source": "logs_stream",
+              "query_string": "env:development service:(oficina-mecanica-api OR oficina-mecanica-execucao OR oficina-mecanica-orcamento-pagamento) (@Properties.operation:* OR @operation:*)",
+              "sort": {
+                "column": "timestamp",
+                "order": "desc"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Traces da mensageria — depende de ingestão e indexação APM",
+        "type": "list_stream",
+        "requests": [
+          {
+            "response_format": "event_list",
+            "columns": [
+              {
+                "field": "timestamp",
+                "width": "compact"
+              },
+              {
+                "field": "service",
+                "width": "compact"
+              },
+              {
+                "field": "resource_name",
+                "width": "full"
+              }
+            ],
+            "query": {
+              "data_source": "trace_stream",
+              "query_string": "env:development service:(oficina-mecanica-api OR oficina-mecanica-execucao OR oficina-mecanica-orcamento-pagamento) operation_name:(os.processar OR os.publicar OR execucao.processar OR execucao.publicar OR orcamento_pagamento.processar OR orcamento_pagamento.publicar)",
+              "sort": {
+                "column": "timestamp",
+                "order": "desc"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Réplicas desejadas e disponíveis — não substitui /health",
+        "type": "timeseries",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "max:kubernetes_state.deployment.replicas_desired{env:development AND (kube_deployment:oficina-mecanica-api OR kube_deployment:oficina-mecanica-execucao OR kube_deployment:oficina-mecanica-orcamento-pagamento)} by {kube_cluster_name,kube_namespace,kube_deployment}",
+            "display_type": "line"
+          },
+          {
+            "q": "max:kubernetes_state.deployment.replicas_available{env:development AND (kube_deployment:oficina-mecanica-api OR kube_deployment:oficina-mecanica-execucao OR kube_deployment:oficina-mecanica-orcamento-pagamento)} by {kube_cluster_name,kube_namespace,kube_deployment}",
+            "display_type": "line"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Mensagens disponíveis nas DLQs — requer integração AWS/SQS",
+        "type": "timeseries",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "max:aws.sqs.approximate_number_of_messages_visible{queuename:oficina-mecanica-api-development-dlq.fifo OR queuename:oficina-mecanica-execucao-development-dlq.fifo OR queuename:oficina-mecanica-orcamento-pagamento-development-dlq.fifo} by {queuename,region}",
+            "display_type": "line"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Mensagens em voo nas DLQs — requer integração AWS/SQS",
+        "type": "timeseries",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "max:aws.sqs.approximate_number_of_messages_not_visible{queuename:oficina-mecanica-api-development-dlq.fifo OR queuename:oficina-mecanica-execucao-development-dlq.fifo OR queuename:oficina-mecanica-orcamento-pagamento-development-dlq.fifo} by {queuename,region}",
+            "display_type": "line"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Idade aproximada nas DLQs — segundos; não mede tempo original de falha",
+        "type": "timeseries",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "max:aws.sqs.approximate_age_of_oldest_message{queuename:oficina-mecanica-api-development-dlq.fifo OR queuename:oficina-mecanica-execucao-development-dlq.fifo OR queuename:oficina-mecanica-orcamento-pagamento-development-dlq.fifo} by {queuename,region}",
+            "display_type": "line"
+          }
+        ]
+      }
+    }
+  ]
+}
