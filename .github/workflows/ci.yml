@@ -593,6 +593,34 @@ jobs:
           console.log('Painel estruturalmente válido; ausência de telemetria não vira zero. Importação e ingestão pendentes.');
           VALIDAR_PAINEL
 
+      - name: "🧪 Testar validação real dos ingressos privados"
+        run: |
+          node <<'TESTAR_INGRESSOS_PRIVADOS'
+          const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+          const y=fs.readFileSync('.github/workflows/aws-deploy.yml','utf8').replace(/\r/g,'');
+          const bloco=y.split("node <<'VALIDAR_INGRESSOS_PRIVADOS'\n")[1]?.split('          VALIDAR_INGRESSOS_PRIVADOS')[0];
+          assert(bloco,'Validação real ausente.');
+          const codigo=bloco.split('          // Execução no runner')[0].split('\n').map(l=>l.slice(10)).join('\n');
+          const contexto={};vm.runInNewContext(codigo,contexto);
+          const conta='123456789012',regiao='us-east-1',base='arn:aws:elasticloadbalancing:'+regiao+':'+conta+':';
+          const contratos={};for(const [s,node_port,listener_port]of [['execucao',30081,8081],['orcamento_pagamento',30082,8082]])contratos[s]={node_port,listener_port,listener_arn:base+'listener/net/privado/abc/'+s,target_group_arn:base+'targetgroup/'+s+'/abc',nlb_arn:base+'loadbalancer/net/privado/abc',node_security_group_id:'sg-nodes',nlb_security_group_id:'sg-nlb'};
+          const prefixo='/oficina-mecanica/development/kubernetes';
+          const aws=(...a)=>{
+            const c=Object.values(contratos).find(c=>a.includes(c.listener_arn)||a.includes(c.target_group_arn))||contratos.execucao;
+            if(a[1]==='describe-load-balancers')return {LoadBalancers:[{Scheme:'internal',Type:'network',LoadBalancerArn:c.nlb_arn,VpcId:'vpc-teste'}]};
+            if(a[1]==='describe-listeners')return {Listeners:[{ListenerArn:c.listener_arn,LoadBalancerArn:c.nlb_arn,Port:c.listener_port,Protocol:'TCP',DefaultActions:[{Type:'forward',TargetGroupArn:c.target_group_arn}]}]};
+            if(a[1]==='describe-target-groups')return {TargetGroups:[{TargetGroupArn:c.target_group_arn,Port:c.node_port,Protocol:'TCP',TargetType:'instance',VpcId:'vpc-teste'}]};
+            if(a[0]==='ec2')return {SecurityGroupRules:Object.values(contratos).map(c=>({IsEgress:false,IpProtocol:'tcp',FromPort:c.node_port,ToPort:c.node_port,ReferencedGroupInfo:{GroupId:'sg-nlb'}}))};
+            const nome=a[a.indexOf('--name')+1];const owner=Object.keys(contratos).find(k=>nome.startsWith(prefixo+'/'+k+'_'));const v=contratos[owner];return {Parameter:{Type:'String',Value:nome.endsWith('_node_port')?String(v.node_port):v.listener_arn}};
+          };
+          const validar=consultar=>contexto.validarIngressos(contratos,conta,regiao,prefixo,consultar);
+          validar(aws);
+          for(const alterar of [r=>{if(r.LoadBalancers)r.LoadBalancers[0].Scheme='internet-facing';},r=>{if(r.Listeners)r.Listeners[0].Port=80;},r=>{if(r.TargetGroups)r.TargetGroups[0].Port=30080;},r=>{if(r.Parameter)r.Parameter.Value='outro-owner';},r=>{if(r.SecurityGroupRules)r.SecurityGroupRules=[];}])assert.throws(()=>validar((...a)=>{const r=aws(...a);alterar(r);return r;}));
+          assert.throws(()=>validar(()=>{throw Error('AccessDenied');}));
+          assert.throws(()=>contexto.validarIngressos(contratos,'999999999999',regiao,prefixo,aws));
+          console.log('Ingresso privado real: conta, listeners, portas, SGs, SSM e falhas de consulta verificados.');
+          TESTAR_INGRESSOS_PRIVADOS
+
       - name: "🎨 03 · Verificar formatação Terraform"
         run: |
           terraform fmt -check -recursive infra/terraform

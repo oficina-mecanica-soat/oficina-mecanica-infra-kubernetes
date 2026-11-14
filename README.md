@@ -256,3 +256,11 @@ Planos Terraform e, na Lambda, o pacote planejado usam `github.run_id` e `github
 Uma nova tentativa precisa gerar e publicar seus próprios artefatos. Reexecutar somente jobs falhos, mantendo o planejamento bem-sucedido de uma tentativa anterior, não fornece artefatos para a nova tentativa e deve bloquear o download. Para repetir o ciclo, reexecute todos os jobs e gere um novo plano a partir do state recuperado; não renomeie nem copie artefatos antigos nem pule o planejamento. Não é autorizada uma reexecução AWS por este ajuste.
 
 Testes inline verificam nomes de produtor/consumidor, isolamento entre tentativas/execuções/contas/ambientes, ausência de fallback silencioso de artefatos e preservação da configuração de state em falha. São verificações locais/simuladas, não prova de um rerun real de apply no laboratório. Mantém bloqueios AWS, environments, plano salvo, ação versionada, recursos e contratos. Sem novas pastas/arquivos auxiliares. Integrar somente em `develop`, com merge por Gabriel; laboratório offline, sem implantação ou promoção para release/main.
+
+### Ingressos privados dos microsserviços
+
+O NLB interno existente mantém o listener da API na porta 80 e acrescenta listeners TCP independentes: Execução em 8081, com NodePort 30081; Orçamento/Pagamento em 8082, com NodePort 30082. Cada um possui target group e associação ao ASG do node group, seguindo o ingresso da API. Não cria outro balanceador, não renomeia recursos existentes nem publica NodePorts na internet.
+
+Os contratos String sob o prefixo Kubernetes são `execucao_internal_node_port`, `execucao_internal_nlb_listener_arn`, `orcamento_pagamento_internal_node_port` e `orcamento_pagamento_internal_nlb_listener_arn`. Os workloads consomem as portas; o Gateway consome os listeners e mantém a restrição do VPC Link ao SG do NLB. As regras dos nodes aceitam o SG do NLB nas portas específicas.
+
+O status da plataforma depende dos novos recursos e contratos. Após apply, a esteira confere NLB interno, encaminhamento dos listeners, target groups, portas, VPC, SGs e SSM. Isso não atesta health HTTP ou regra de negócio; cada CD de aplicação e o aceite integrado continuam responsáveis por essas provas. Após destroy, confirma também ausência do NLB, dos target groups e contratos novos, tratando erros de acesso como falha.
