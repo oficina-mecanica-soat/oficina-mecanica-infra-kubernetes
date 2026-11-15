@@ -126,6 +126,14 @@ Environment secret adicional:
 
 `DD_SITE` deve ser criado em **Settings > Environments > development > Environment variables**. O valor real de `DD_API_KEY` nunca deve ser versionado.
 
+### Painel dos serviços e da Saga
+
+O arquivo [`observability/datadog/saga-dashboard.json`](observability/datadog/saga-dashboard.json) organiza logs/traces da Saga, DLQs, réplicas, CPU/memória/reinícios e métricas HTTP dos três workloads. A distribuição `trace.aspnet_core.request` fornece o p95; `hits/errors` são contadores de requisições/erros, não contagens de ordens. O stream de abertura/entrega usa eventos estruturados já emitidos pela API, sem inferir duração por status ou transformar tentativas de publicação em negócios únicos.
+
+Fontes: [métricas Kubernetes](https://docs.datadoghq.com/containers/kubernetes/data_collected/) e [métricas APM](https://docs.datadoghq.com/tracing/metrics/metrics_namespace/). CPU está em nanocores e memória em bytes. A métrica `duration` legada não deve ser usada para percentis.
+
+A validação no CI confere estrutura, fontes/escopo e agregações; não cria ou importa o painel nem comprova ingestão. Conferir nomes de operação, tags, conta/cluster, versão e intervalo no ambiente real. Réplicas disponíveis não substituem health funcional; ausência de telemetria não significa zero erros. Alertas precisam de baseline e teste de disparo/recuperação, conforme o [roteiro canônico](https://github.com/oficina-mecanica-soat/oficina-mecanica-api/blob/develop/docs/evidencias/validacao-integrada.md).
+
 ## 🧭 Controle apply/destroy
 
 O deploy real é controlado por:

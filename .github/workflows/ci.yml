@@ -533,13 +533,20 @@ jobs:
           const assert = require('node:assert/strict');
           const painel = JSON.parse(fs.readFileSync('observability/datadog/saga-dashboard.json', 'utf8'));
           // Validação local do subconjunto utilizado; não substitui importação/ingestão reais.
-          const metricas = new Set([
-            'kubernetes_state.deployment.replicas_desired',
-            'kubernetes_state.deployment.replicas_available',
-            'aws.sqs.approximate_number_of_messages_visible',
-            'aws.sqs.approximate_number_of_messages_not_visible',
-            'aws.sqs.approximate_age_of_oldest_message'
+          const metricas = new Map([
+            ['kubernetes_state.deployment.replicas_desired', 'max'],
+            ['kubernetes_state.deployment.replicas_available', 'max'],
+            ['aws.sqs.approximate_number_of_messages_visible', 'max'],
+            ['aws.sqs.approximate_number_of_messages_not_visible', 'max'],
+            ['aws.sqs.approximate_age_of_oldest_message', 'max'],
+            ['kubernetes.cpu.usage.total', 'sum'],
+            ['kubernetes.memory.usage', 'sum'],
+            ['kubernetes.containers.restarts', 'max'],
+            ['trace.aspnet_core.request', 'p95'],
+            ['trace.aspnet_core.request.hits', 'sum'],
+            ['trace.aspnet_core.request.errors', 'sum']
           ]);
+          const contagens = new Set(['trace.aspnet_core.request.hits', 'trace.aspnet_core.request.errors']);
           function validar(dashboard) {
             assert.equal(dashboard.layout_type, 'ordered');
             assert.equal(dashboard.reflow_type, 'auto');
@@ -566,15 +573,27 @@ jobs:
                     assert(column.field && ['auto', 'compact', 'full'].includes(column.width));
                   }
                 } else {
-                  const consulta = /^max:([a-z_.]+)\{(.+)\} by \{([^}]+)\}$/.exec(request.q);
-                  assert(consulta && metricas.has(consulta[1]), 'Métrica fora das integrações nativas conferidas.');
-                  if (consulta[1].startsWith('aws.sqs.')) {
+                  const consulta = /^(max|sum|p95):([a-z_.]+)\{(.+)\} by \{([^}]+)\}(\.as_count\(\))?$/.exec(request.q);
+                  assert(consulta && metricas.has(consulta[2]), 'Métrica fora das integrações nativas conferidas.');
+                  assert.equal(consulta[1], metricas.get(consulta[2]), 'Agregação incompatível com a métrica.');
+                  assert.equal(Boolean(consulta[5]), contagens.has(consulta[2]), 'Contadores APM exigem as_count; gauges não.');
+                  if (consulta[2].startsWith('aws.sqs.')) {
                     for (const nome of ['api', 'execucao', 'orcamento-pagamento']) {
-                      assert(consulta[2].includes('queuename:oficina-mecanica-' + nome + '-development-dlq.fifo'));
+                      assert(consulta[3].includes('queuename:oficina-mecanica-' + nome + '-development-dlq.fifo'));
+                    }
+                    assert(consulta[4].includes('queuename') && consulta[4].includes('region'));
+                  } else if (consulta[2].startsWith('trace.')) {
+                    assert(consulta[3].includes('env:development'));
+                    assert.equal(consulta[4], 'service');
+                    for (const nome of ['api', 'execucao', 'orcamento-pagamento']) {
+                      assert(consulta[3].includes('service:oficina-mecanica-' + nome));
                     }
                   } else {
-                    assert(consulta[2].includes('env:development'));
-                    assert(consulta[3].includes('kube_deployment'));
+                    assert(consulta[3].includes('env:development'));
+                    assert(consulta[4].includes('kube_deployment'));
+                    for (const nome of ['api', 'execucao', 'orcamento-pagamento']) {
+                      assert(consulta[3].includes('kube_deployment:oficina-mecanica-' + nome));
+                    }
                   }
                 }
               }
@@ -584,7 +603,11 @@ jobs:
           for (const alterar of [
             p => { p.widgets.find(w => w.definition.type === 'timeseries').definition.requests[0].q = 'default_zero(max:inventada{*})'; },
             p => { p.widgets.find(w => w.definition.type === 'timeseries').definition.requests[0].q = 'max:inventada{*} by {host}'; },
-            p => { p.widgets.find(w => w.definition.type === 'list_stream').definition.requests[0].query.query_string = 'env:production service:outro'; }
+            p => { p.widgets.find(w => w.definition.type === 'list_stream').definition.requests[0].query.query_string = 'env:production service:outro'; },
+            p => { p.widgets.find(w => w.definition.title?.startsWith('Latência HTTP')).definition.requests[0].q = 'p95:trace.aspnet_core.request.duration{env:development} by {service}'; },
+            p => { const w = p.widgets.find(w => w.definition.title?.startsWith('CPU por')); w.definition.requests[0].q = w.definition.requests[0].q.replace('sum:', 'max:'); },
+            p => { const w = p.widgets.find(w => w.definition.title?.startsWith('Memória por')); w.definition.requests[0].q += '.as_count()'; },
+            p => { const w = p.widgets.find(w => w.definition.title?.startsWith('Requisições HTTP')); w.definition.requests[0].q = w.definition.requests[0].q.replace('.as_count()', ''); }
           ]) {
             const invalido = structuredClone(painel);
             alterar(invalido);

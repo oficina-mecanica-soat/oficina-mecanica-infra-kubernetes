@@ -1,13 +1,13 @@
 {
-  "title": "Oficina Mecânica — Saga, Execução e DLQ",
-  "description": "F4-11. Consultas derivadas da instrumentação existente e das integrações nativas. Importação e ingestão ainda precisam ser validadas; nenhum dado é convertido em zero para simular disponibilidade.",
+  "title": "Oficina Mecânica — serviços, Saga e DLQ",
+  "description": "Consultas da instrumentação existente e integrações nativas. Validação de estrutura não comprova importação, ingestão ou alertas. Ausência de dados não é disponibilidade.",
   "layout_type": "ordered",
   "reflow_type": "auto",
   "widgets": [
     {
       "definition": {
         "type": "note",
-        "content": "## Oficina Mecânica — desenvolvimento\nFalhas de operação são tentativas técnicas, não contagens de Sagas fracassadas. Para investigar, abra o log e filtre por saga_id/ordem_servico_id. As colunas Properties preservam o JSON Serilog; confira o parsing na ingestão.\n\nSem dados não significa saudável. Réplicas disponíveis não comprovam /health nem o fluxo funcional. As métricas de DLQ exigem integração AWS/SQS habilitada e os nomes das filas conferidos; são aproximações. Traces exigem profiler, Agent e spans indexados. Não há limites de alerta definidos sem medição."
+        "content": "## Oficina Mecânica — desenvolvimento\nFalhas de operação são tentativas técnicas, não contagens de Sagas fracassadas. Para investigar, abra o log e filtre por saga_id/ordem_servico_id. As colunas Properties preservam o JSON Serilog; confira o parsing na ingestão.\n\nSem dados não significa saudável. Réplicas disponíveis não comprovam /health nem o fluxo funcional. As métricas de DLQ exigem integração AWS/SQS habilitada e os nomes das filas conferidos; são aproximações. Traces exigem profiler, Agent e spans indexados. Não há limites de alerta definidos sem medição.\n\nCPU é medida em nanocores, memória em bytes e reinícios são contadores por container. A latência p95 usa a distribuição APM trace.aspnet_core.request, não a métrica duration legada. Requisições/erros HTTP não são volumes de OS. O stream de abertura/entrega mostra eventos observados, sem garantir contagem total ou duração por status. Confira conta, cluster, versão e intervalo da janela; nomes repetidos após reset não distinguem contas. Integrações Lambda/Gateway/RDS e métricas de negócio continuam exigindo suas próprias provas."
       }
     },
     {
@@ -177,6 +177,125 @@
           {
             "q": "max:aws.sqs.approximate_age_of_oldest_message{queuename:oficina-mecanica-api-development-dlq.fifo OR queuename:oficina-mecanica-execucao-development-dlq.fifo OR queuename:oficina-mecanica-orcamento-pagamento-development-dlq.fifo} by {queuename,region}",
             "display_type": "line"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "CPU por workload — nanocores",
+        "type": "timeseries",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "sum:kubernetes.cpu.usage.total{env:development AND (kube_deployment:oficina-mecanica-api OR kube_deployment:oficina-mecanica-execucao OR kube_deployment:oficina-mecanica-orcamento-pagamento)} by {kube_cluster_name,kube_namespace,kube_deployment}",
+            "display_type": "line"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Memória por workload — bytes",
+        "type": "timeseries",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "sum:kubernetes.memory.usage{env:development AND (kube_deployment:oficina-mecanica-api OR kube_deployment:oficina-mecanica-execucao OR kube_deployment:oficina-mecanica-orcamento-pagamento)} by {kube_cluster_name,kube_namespace,kube_deployment}",
+            "display_type": "line"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Reinícios por container — contador acumulado",
+        "type": "timeseries",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "max:kubernetes.containers.restarts{env:development AND (kube_deployment:oficina-mecanica-api OR kube_deployment:oficina-mecanica-execucao OR kube_deployment:oficina-mecanica-orcamento-pagamento)} by {kube_cluster_name,kube_namespace,kube_deployment,pod_name,kube_container_name}",
+            "display_type": "line"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Latência HTTP p95 — requer APM nativo",
+        "type": "timeseries",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "p95:trace.aspnet_core.request{env:development AND (service:oficina-mecanica-api OR service:oficina-mecanica-execucao OR service:oficina-mecanica-orcamento-pagamento)} by {service}",
+            "display_type": "line"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Requisições HTTP por intervalo",
+        "type": "timeseries",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "sum:trace.aspnet_core.request.hits{env:development AND (service:oficina-mecanica-api OR service:oficina-mecanica-execucao OR service:oficina-mecanica-orcamento-pagamento)} by {service}.as_count()",
+            "display_type": "line"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Erros APM por intervalo — não são Sagas únicas",
+        "type": "timeseries",
+        "show_legend": true,
+        "requests": [
+          {
+            "q": "sum:trace.aspnet_core.request.errors{env:development AND (service:oficina-mecanica-api OR service:oficina-mecanica-execucao OR service:oficina-mecanica-orcamento-pagamento)} by {service}.as_count()",
+            "display_type": "line"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Aberturas e entregas observadas — IDs de OS",
+        "type": "list_stream",
+        "requests": [
+          {
+            "response_format": "event_list",
+            "columns": [
+              {
+                "field": "timestamp",
+                "width": "compact"
+              },
+              {
+                "field": "service",
+                "width": "compact"
+              },
+              {
+                "field": "@Properties.OrdemServicoId",
+                "width": "compact"
+              },
+              {
+                "field": "@Properties.operation",
+                "width": "compact"
+              },
+              {
+                "field": "content",
+                "width": "full"
+              }
+            ],
+            "query": {
+              "data_source": "logs_stream",
+              "query_string": "env:development AND (service:oficina-mecanica-api OR service:oficina-mecanica-execucao OR service:oficina-mecanica-orcamento-pagamento) (@Properties.operation:(AbrirOrdemServico OR EntregarOrdemServico) OR @operation:(AbrirOrdemServico OR EntregarOrdemServico)) (@Properties.OrdemServicoId:* OR @OrdemServicoId:*)",
+              "sort": {
+                "column": "timestamp",
+                "order": "desc"
+              }
+            }
           }
         ]
       }
