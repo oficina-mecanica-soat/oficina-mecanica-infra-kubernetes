@@ -1,0 +1,510 @@
+{
+  "title": "Oficina Mecânica — Aplicações",
+  "description": "Ambiente development. Definição versionada no repositório Kubernetes; grupos por serviço. Importação não substitui validação de ingestão.",
+  "layout_type": "ordered",
+  "reflow_type": "fixed",
+  "widgets": [
+    {
+      "definition": {
+        "type": "note",
+        "content": "Tráfego, latência e logs por serviço; ao final, rastreamento da Saga entre os participantes. Tráfego HTTP inclui healthchecks e não equivale a OS únicas. Sem dados não significa saudável. Use o intervalo da jornada para investigar os IDs."
+      },
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "width": 12,
+        "height": 2
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "OS / API",
+        "layout_type": "ordered",
+        "show_title": true,
+        "background_color": "white",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Requisições HTTP",
+              "show_legend": true,
+              "requests": [
+                {
+                  "q": "sum:trace.aspnet_core.request.hits{env:development,service:oficina-mecanica-api} by {service}.as_count()",
+                  "display_type": "line"
+                }
+              ]
+            },
+            "layout": {
+              "x": 0,
+              "y": 0,
+              "width": 6,
+              "height": 3
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Latência HTTP p95",
+              "show_legend": true,
+              "requests": [
+                {
+                  "q": "p95:trace.aspnet_core.request{env:development,service:oficina-mecanica-api} by {service}",
+                  "display_type": "line"
+                }
+              ]
+            },
+            "layout": {
+              "x": 6,
+              "y": 0,
+              "width": 6,
+              "height": 3
+            }
+          },
+          {
+            "definition": {
+              "type": "list_stream",
+              "title": "Logs da aplicação",
+              "requests": [
+                {
+                  "response_format": "event_list",
+                  "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "@Properties.operation",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "content",
+                      "width": "full"
+                    }
+                  ],
+                  "query": {
+                    "data_source": "logs_stream",
+                    "query_string": "env:development service:oficina-mecanica-api -@Properties.RequestPath:\"/api/health\"",
+                    "sort": {
+                      "column": "timestamp",
+                      "order": "desc"
+                    }
+                  }
+                }
+              ]
+            },
+            "layout": {
+              "x": 0,
+              "y": 3,
+              "width": 6,
+              "height": 5
+            }
+          },
+          {
+            "definition": {
+              "type": "list_stream",
+              "title": "Logs de erro",
+              "requests": [
+                {
+                  "response_format": "event_list",
+                  "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "content",
+                      "width": "full"
+                    }
+                  ],
+                  "query": {
+                    "data_source": "logs_stream",
+                    "query_string": "env:development service:oficina-mecanica-api @Level:(Error OR Fatal)",
+                    "sort": {
+                      "column": "timestamp",
+                      "order": "desc"
+                    }
+                  }
+                }
+              ]
+            },
+            "layout": {
+              "x": 6,
+              "y": 3,
+              "width": 6,
+              "height": 5
+            }
+          }
+        ]
+      },
+      "layout": {
+        "x": 0,
+        "y": 2,
+        "width": 12,
+        "height": 10
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "Execução",
+        "layout_type": "ordered",
+        "show_title": true,
+        "background_color": "white",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Requisições HTTP",
+              "show_legend": true,
+              "requests": [
+                {
+                  "q": "sum:trace.aspnet_core.request.hits{env:development,service:oficina-mecanica-execucao} by {service}.as_count()",
+                  "display_type": "line"
+                }
+              ]
+            },
+            "layout": {
+              "x": 0,
+              "y": 0,
+              "width": 6,
+              "height": 3
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Latência HTTP p95",
+              "show_legend": true,
+              "requests": [
+                {
+                  "q": "p95:trace.aspnet_core.request{env:development,service:oficina-mecanica-execucao} by {service}",
+                  "display_type": "line"
+                }
+              ]
+            },
+            "layout": {
+              "x": 6,
+              "y": 0,
+              "width": 6,
+              "height": 3
+            }
+          },
+          {
+            "definition": {
+              "type": "list_stream",
+              "title": "Logs da aplicação",
+              "requests": [
+                {
+                  "response_format": "event_list",
+                  "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "@Properties.operation",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "content",
+                      "width": "full"
+                    }
+                  ],
+                  "query": {
+                    "data_source": "logs_stream",
+                    "query_string": "env:development service:oficina-mecanica-execucao -@Properties.RequestPath:\"/api/health\"",
+                    "sort": {
+                      "column": "timestamp",
+                      "order": "desc"
+                    }
+                  }
+                }
+              ]
+            },
+            "layout": {
+              "x": 0,
+              "y": 3,
+              "width": 6,
+              "height": 5
+            }
+          },
+          {
+            "definition": {
+              "type": "list_stream",
+              "title": "Logs de erro",
+              "requests": [
+                {
+                  "response_format": "event_list",
+                  "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "content",
+                      "width": "full"
+                    }
+                  ],
+                  "query": {
+                    "data_source": "logs_stream",
+                    "query_string": "env:development service:oficina-mecanica-execucao @Level:(Error OR Fatal)",
+                    "sort": {
+                      "column": "timestamp",
+                      "order": "desc"
+                    }
+                  }
+                }
+              ]
+            },
+            "layout": {
+              "x": 6,
+              "y": 3,
+              "width": 6,
+              "height": 5
+            }
+          }
+        ]
+      },
+      "layout": {
+        "x": 0,
+        "y": 12,
+        "width": 12,
+        "height": 10
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "Orçamento / Pagamento",
+        "layout_type": "ordered",
+        "show_title": true,
+        "background_color": "white",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Requisições HTTP",
+              "show_legend": true,
+              "requests": [
+                {
+                  "q": "sum:trace.aspnet_core.request.hits{env:development,service:oficina-mecanica-orcamento-pagamento} by {service}.as_count()",
+                  "display_type": "line"
+                }
+              ]
+            },
+            "layout": {
+              "x": 0,
+              "y": 0,
+              "width": 6,
+              "height": 3
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Latência HTTP p95",
+              "show_legend": true,
+              "requests": [
+                {
+                  "q": "p95:trace.aspnet_core.request{env:development,service:oficina-mecanica-orcamento-pagamento} by {service}",
+                  "display_type": "line"
+                }
+              ]
+            },
+            "layout": {
+              "x": 6,
+              "y": 0,
+              "width": 6,
+              "height": 3
+            }
+          },
+          {
+            "definition": {
+              "type": "list_stream",
+              "title": "Logs da aplicação",
+              "requests": [
+                {
+                  "response_format": "event_list",
+                  "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "@Properties.operation",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "content",
+                      "width": "full"
+                    }
+                  ],
+                  "query": {
+                    "data_source": "logs_stream",
+                    "query_string": "env:development service:oficina-mecanica-orcamento-pagamento -@Properties.RequestPath:\"/api/health\"",
+                    "sort": {
+                      "column": "timestamp",
+                      "order": "desc"
+                    }
+                  }
+                }
+              ]
+            },
+            "layout": {
+              "x": 0,
+              "y": 3,
+              "width": 6,
+              "height": 5
+            }
+          },
+          {
+            "definition": {
+              "type": "list_stream",
+              "title": "Logs de erro",
+              "requests": [
+                {
+                  "response_format": "event_list",
+                  "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "content",
+                      "width": "full"
+                    }
+                  ],
+                  "query": {
+                    "data_source": "logs_stream",
+                    "query_string": "env:development service:oficina-mecanica-orcamento-pagamento @Level:(Error OR Fatal)",
+                    "sort": {
+                      "column": "timestamp",
+                      "order": "desc"
+                    }
+                  }
+                }
+              ]
+            },
+            "layout": {
+              "x": 6,
+              "y": 3,
+              "width": 6,
+              "height": 5
+            }
+          }
+        ]
+      },
+      "layout": {
+        "x": 0,
+        "y": 22,
+        "width": 12,
+        "height": 10
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "Saga — rastreamento entre serviços",
+        "layout_type": "ordered",
+        "show_title": true,
+        "background_color": "white",
+        "widgets": [
+          {
+            "definition": {
+              "type": "list_stream",
+              "title": "Traces da mensageria",
+              "requests": [
+                {
+                  "response_format": "event_list",
+                  "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "service",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "resource_name",
+                      "width": "full"
+                    }
+                  ],
+                  "query": {
+                    "data_source": "trace_stream",
+                    "query_string": "env:development service:(oficina-mecanica-api OR oficina-mecanica-execucao OR oficina-mecanica-orcamento-pagamento) operation_name:(os.processar OR os.publicar OR execucao.processar OR execucao.publicar OR orcamento_pagamento.processar OR orcamento_pagamento.publicar)",
+                    "sort": {
+                      "column": "timestamp",
+                      "order": "desc"
+                    }
+                  }
+                }
+              ]
+            },
+            "layout": {
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 5
+            }
+          },
+          {
+            "definition": {
+              "type": "list_stream",
+              "title": "Operações com ID de Saga",
+              "requests": [
+                {
+                  "response_format": "event_list",
+                  "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "service",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "@Properties.saga_id",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "@Properties.ordem_servico_id",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "content",
+                      "width": "full"
+                    }
+                  ],
+                  "query": {
+                    "data_source": "logs_stream",
+                    "query_string": "env:development service:(oficina-mecanica-api OR oficina-mecanica-execucao OR oficina-mecanica-orcamento-pagamento) @Properties.saga_id:*",
+                    "sort": {
+                      "column": "timestamp",
+                      "order": "desc"
+                    }
+                  }
+                }
+              ]
+            },
+            "layout": {
+              "x": 0,
+              "y": 5,
+              "width": 12,
+              "height": 5
+            }
+          }
+        ]
+      },
+      "layout": {
+        "x": 0,
+        "y": 32,
+        "width": 12,
+        "height": 12
+      }
+    }
+  ]
+}
