@@ -126,9 +126,12 @@ Environment secret adicional:
 
 `DD_SITE` deve ser criado em **Settings > Environments > development > Environment variables**. O valor real de `DD_API_KEY` nunca deve ser versionado.
 
-### Painel dos serviços e da Saga
+### Painéis por assunto e serviço
 
-O arquivo [`observability/datadog/saga-dashboard.json`](observability/datadog/saga-dashboard.json) organiza logs/traces da Saga, DLQs, réplicas, CPU/memória/reinícios e métricas HTTP dos três workloads. A distribuição `trace.aspnet_core.request` fornece o p95; `hits/errors` são contadores de requisições/erros, não contagens de ordens. O stream de abertura/entrega usa eventos estruturados já emitidos pela API, sem inferir duração por status ou transformar tentativas de publicação em negócios únicos.
+- **Infraestrutura** — [`infraestrutura-dashboard.json`](observability/datadog/infraestrutura-dashboard.json): CPU, memória, réplicas e reinícios em grupos separados para OS/API, Execução e Orçamento/Pagamento; disponibilidade da plataforma em grupo próprio. O escopo atual é Kubernetes; RDS/SQS exigem integração AWS e não são apresentados como gráficos vazios.
+- **Aplicações** — [`aplicacoes-dashboard.json`](observability/datadog/aplicacoes-dashboard.json): tráfego HTTP, latência p95 e logs por serviço; traces e IDs da Saga em grupo transversal. `hits` conta requisições, incluindo healthchecks, não ordens de serviço únicas.
+
+As definições usam grupos nativos do Datadog e podem ser importadas em **Configure → Import dashboard JSON**. Preserve o histórico e confira o dashboard de destino antes de substituir seu conteúdo.
 
 Fontes: [métricas Kubernetes](https://docs.datadoghq.com/containers/kubernetes/data_collected/) e [métricas APM](https://docs.datadoghq.com/tracing/metrics/metrics_namespace/). CPU está em nanocores e memória em bytes. A métrica `duration` legada não deve ser usada para percentis.
 
