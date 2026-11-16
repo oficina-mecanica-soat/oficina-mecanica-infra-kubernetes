@@ -213,7 +213,7 @@ jobs:
             if (!anterior || !Number.isInteger(Number(anterior.revision)) || Number(anterior.revision) < 1) throw Error('Nenhuma revisão anterior válida do mesmo chart.');
             return Number(anterior.revision);
           }
-          if (require.main === module) {
+          if (!module.parent) {
             const release = process.env.DATADOG_RELEASE_NAME;
             const namespace = process.env.DATADOG_NAMESPACE;
             if (release !== 'datadog' || namespace !== 'datadog') throw Error('Recuperação restrita ao Datadog.');
