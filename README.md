@@ -128,8 +128,8 @@ Environment secret adicional:
 
 ### Painéis por assunto e serviço
 
-- **Infraestrutura** — [`infraestrutura-dashboard.json`](observability/datadog/infraestrutura-dashboard.json): CPU, memória, réplicas e reinícios em grupos separados para OS/API, Execução e Orçamento/Pagamento; disponibilidade da plataforma em grupo próprio. O escopo atual é Kubernetes; RDS/SQS exigem integração AWS e não são apresentados como gráficos vazios.
-- **Aplicações** — [`aplicacoes-dashboard.json`](observability/datadog/aplicacoes-dashboard.json): tráfego HTTP, latência p95 e logs por serviço; traces e IDs da Saga em grupo transversal. `hits` conta requisições, incluindo healthchecks, não ordens de serviço únicas.
+- **[Infraestrutura](https://app.datadoghq.com/dashboard/axy-gix-3kr)** — [`infraestrutura-dashboard.json`](observability/datadog/infraestrutura-dashboard.json): CPU, memória, réplicas e reinícios em grupos separados para OS/API, Execução e Orçamento/Pagamento; disponibilidade da plataforma em grupo próprio. O escopo atual é Kubernetes; RDS/SQS exigem integração AWS e não são apresentados como gráficos vazios.
+- **[Aplicações](https://app.datadoghq.com/dashboard/2g5-62n-jci)** — [`aplicacoes-dashboard.json`](observability/datadog/aplicacoes-dashboard.json): tráfego HTTP, latência p95 e logs por serviço; traces e IDs da Saga em grupo transversal. `hits` conta requisições, incluindo healthchecks, não ordens de serviço únicas.
 
 As definições usam grupos nativos do Datadog e podem ser importadas em **Configure → Import dashboard JSON**. Preserve o histórico e confira o dashboard de destino antes de substituir seu conteúdo.
 
