@@ -196,6 +196,42 @@ jobs:
 
           echo "Chart Datadog renderizado com sucesso."
 
+      - name: "🛟 Recuperar atualização Datadog interrompida"
+        run: |
+          node <<'RECUPERAR_HELM'
+          const cp = require('node:child_process');
+          function revisaoRecuperavel(historico, agora, chart) {
+            if (!Array.isArray(historico) || !historico.length) throw Error('Histórico Helm inválido.');
+            const ordenado = [...historico].sort((a, b) => Number(a.revision) - Number(b.revision));
+            const atual = ordenado.at(-1);
+            if (!['pending-upgrade', 'pending-rollback', 'pending-install'].includes(atual.status)) return null;
+            if (!['pending-upgrade', 'pending-rollback'].includes(atual.status)) throw Error('Instalação inicial pendente exige investigação.');
+            const inicio = Date.parse(atual.updated);
+            if (!Number.isFinite(inicio) || agora - inicio < 15 * 60 * 1000) throw Error('Operação recente ou sem data válida; não recuperar automaticamente.');
+            if (atual.chart !== chart) throw Error('Chart pendente diferente do previsto.');
+            const anterior = ordenado.filter(r => Number(r.revision) < Number(atual.revision) && ['deployed', 'superseded'].includes(r.status) && r.chart === chart).at(-1);
+            if (!anterior || !Number.isInteger(Number(anterior.revision)) || Number(anterior.revision) < 1) throw Error('Nenhuma revisão anterior válida do mesmo chart.');
+            return Number(anterior.revision);
+          }
+          if (require.main === module) {
+            const release = process.env.DATADOG_RELEASE_NAME;
+            const namespace = process.env.DATADOG_NAMESPACE;
+            if (release !== 'datadog' || namespace !== 'datadog') throw Error('Recuperação restrita ao Datadog.');
+            const helm = (...args) => cp.execFileSync('helm', args, {encoding: 'utf8'});
+            const releases = JSON.parse(helm('list', '--all', '--namespace', namespace, '--output', 'json'));
+            if (releases.some(r => r.name === release)) {
+              const historico = JSON.parse(helm('history', release, '--namespace', namespace, '--max', '50', '--output', 'json'));
+              const revisao = revisaoRecuperavel(historico, Date.now(), 'datadog-' + process.env.DATADOG_CHART_VERSION);
+              if (revisao !== null) {
+                cp.execFileSync('kubectl', ['wait', '--for=condition=Ready', 'nodes', '--all', '--timeout=10m'], {stdio: 'inherit'});
+                console.log('Recuperando atualização interrompida do Datadog para revisão anterior válida: ' + revisao);
+                cp.execFileSync('helm', ['rollback', release, String(revisao), '--namespace', namespace, '--wait', '--timeout', '10m'], {stdio: 'inherit'});
+              }
+            }
+          }
+          module.exports = { revisaoRecuperavel };
+          RECUPERAR_HELM
+
       - name: "🚀 14 · Instalar ou atualizar Datadog"
         env:
           CLUSTER_NAME: ${{ steps.eks.outputs.cluster_name }}
