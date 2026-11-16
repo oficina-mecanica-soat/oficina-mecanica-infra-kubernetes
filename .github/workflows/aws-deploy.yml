@@ -403,6 +403,14 @@ jobs:
               throw new Error('Inventário dos nodes incompleto, incompatível ou fora do cluster.');
             return ids;
           }
+          function inventarioPronto(grupos, nomes, esperado) {
+            if (!Number.isSafeInteger(esperado) || esperado < 1) throw Error('Quantidade desejada de nodes inválida.');
+            if (grupos.length !== nomes.length || grupos.some(grupo => !nomes.includes(grupo.AutoScalingGroupName)))
+              throw Error('Inventário de Auto Scaling Groups divergente.');
+            const instancias = grupos.flatMap(grupo => grupo.Instances || []);
+            return instancias.length === esperado && new Set(instancias.map(item => item.InstanceId)).size === esperado
+              && instancias.every(item => item.InstanceId && item.LifecycleState === 'InService');
+          }
           function conferir(opcoes) {
             return opcoes?.State === 'applied' && opcoes.HttpEndpoint === 'enabled'
               && opcoes.HttpTokens === 'required' && opcoes.HttpPutResponseHopLimit === 2;
@@ -412,9 +420,14 @@ jobs:
             const cluster = tf('eks_cluster_name');
             const grupo = consultar('eks', 'describe-nodegroup', '--cluster-name', cluster, '--nodegroup-name', tf('eks_node_group_name')).nodegroup;
             const nomes = validarGrupo(grupo, consultar('sts', 'get-caller-identity').Account);
-            const grupos = consultar('autoscaling', 'describe-auto-scaling-groups', '--auto-scaling-group-names', ...nomes).AutoScalingGroups;
+            let grupos;
+            for (let tentativa = 0; tentativa < 36; tentativa++) {
+              grupos = consultar('autoscaling', 'describe-auto-scaling-groups', '--auto-scaling-group-names', ...nomes).AutoScalingGroups;
+              if (inventarioPronto(grupos, nomes, grupo.scalingConfig?.desiredSize)) break;
+              if (tentativa === 35) throw Error('Expansão dos nodes não confirmada no prazo; identidade acadêmica pendente.');
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            }
             const ids = grupos.flatMap(item => item.Instances || []).map(item => item.InstanceId);
-            if (!ids.length) throw new Error('Nenhum node disponível para configurar.');
             const listar = () => consultar('ec2', 'describe-instances', '--instance-ids', ...ids).Reservations.flatMap(item => item.Instances);
             validarInstancias(grupos, nomes, listar(), cluster);
             for (const id of ids) consultar('ec2', 'modify-instance-metadata-options', '--instance-id', id,
@@ -431,7 +444,7 @@ jobs:
             throw new Error('Configuração IMDSv2 não foi confirmada no prazo.');
           }
           if (!module.parent) main().catch(error => { console.error(error.message); process.exitCode = 1; });
-          module.exports = { validarGrupo, validarInstancias, conferir };
+          module.exports = { validarGrupo, validarInstancias, inventarioPronto, conferir };
           CONFIGURAR_IMDS_ACADEMICO
 
       - name: "🔎 09 · Validar Kubernetes real após apply"
