@@ -592,6 +592,17 @@ jobs:
           assert.throws(() => validar([anterior, {...pendente, updated:'inválida'}]));
           assert.throws(() => validar([anterior, {...pendente, chart:'outro'}]));
           assert.throws(() => validar([anterior, {...pendente, status:'pending-install'}]));
+          const vm = require('node:vm');
+          const chamadas = [];
+          vm.runInNewContext(bloco[1].split(/\r?\n/).map(l => l.slice(10)).join('\n'), {
+            require: () => ({ execFileSync: (...args) => { chamadas.push(args); return '[]'; } }),
+            module: { exports: {} },
+            process: { env: { DATADOG_RELEASE_NAME: 'datadog', DATADOG_NAMESPACE: 'datadog', DATADOG_CHART_VERSION: '3.239.0' } },
+            console
+          });
+          assert.equal(chamadas.length, 1);
+          assert.equal(chamadas[0][0], 'helm');
+          assert.equal(chamadas[0][1][0], 'list');
           assert.match(bloco[1], /'rollback'/);
           assert(!/uninstall|delete secret|--force/.test(bloco[1]));
           console.log('Recuperação Helm restrita a revisão válida do mesmo chart; operações recentes, instalação inicial e histórico inválido bloqueados.');
