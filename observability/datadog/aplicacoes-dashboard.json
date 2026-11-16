@@ -13,7 +13,7 @@
         "x": 0,
         "y": 0,
         "width": 12,
-        "height": 2
+        "height": 1
       }
     },
     {
@@ -71,16 +71,8 @@
                   "response_format": "event_list",
                   "columns": [
                     {
-                      "field": "timestamp",
-                      "width": "compact"
-                    },
-                    {
-                      "field": "@Properties.operation",
-                      "width": "compact"
-                    },
-                    {
                       "field": "content",
-                      "width": "full"
+                      "width": "auto"
                     }
                   ],
                   "query": {
@@ -110,12 +102,8 @@
                   "response_format": "event_list",
                   "columns": [
                     {
-                      "field": "timestamp",
-                      "width": "compact"
-                    },
-                    {
                       "field": "content",
-                      "width": "full"
+                      "width": "auto"
                     }
                   ],
                   "query": {
@@ -140,7 +128,7 @@
       },
       "layout": {
         "x": 0,
-        "y": 2,
+        "y": 1,
         "width": 12,
         "height": 10
       }
@@ -200,16 +188,8 @@
                   "response_format": "event_list",
                   "columns": [
                     {
-                      "field": "timestamp",
-                      "width": "compact"
-                    },
-                    {
-                      "field": "@Properties.operation",
-                      "width": "compact"
-                    },
-                    {
                       "field": "content",
-                      "width": "full"
+                      "width": "auto"
                     }
                   ],
                   "query": {
@@ -239,12 +219,8 @@
                   "response_format": "event_list",
                   "columns": [
                     {
-                      "field": "timestamp",
-                      "width": "compact"
-                    },
-                    {
                       "field": "content",
-                      "width": "full"
+                      "width": "auto"
                     }
                   ],
                   "query": {
@@ -269,7 +245,7 @@
       },
       "layout": {
         "x": 0,
-        "y": 12,
+        "y": 11,
         "width": 12,
         "height": 10
       }
@@ -329,16 +305,8 @@
                   "response_format": "event_list",
                   "columns": [
                     {
-                      "field": "timestamp",
-                      "width": "compact"
-                    },
-                    {
-                      "field": "@Properties.operation",
-                      "width": "compact"
-                    },
-                    {
                       "field": "content",
-                      "width": "full"
+                      "width": "auto"
                     }
                   ],
                   "query": {
@@ -368,12 +336,8 @@
                   "response_format": "event_list",
                   "columns": [
                     {
-                      "field": "timestamp",
-                      "width": "compact"
-                    },
-                    {
                       "field": "content",
-                      "width": "full"
+                      "width": "auto"
                     }
                   ],
                   "query": {
@@ -398,7 +362,7 @@
       },
       "layout": {
         "x": 0,
-        "y": 22,
+        "y": 21,
         "width": 12,
         "height": 10
       }
@@ -459,24 +423,8 @@
                   "response_format": "event_list",
                   "columns": [
                     {
-                      "field": "timestamp",
-                      "width": "compact"
-                    },
-                    {
-                      "field": "service",
-                      "width": "compact"
-                    },
-                    {
-                      "field": "@Properties.saga_id",
-                      "width": "compact"
-                    },
-                    {
-                      "field": "@Properties.ordem_servico_id",
-                      "width": "compact"
-                    },
-                    {
                       "field": "content",
-                      "width": "full"
+                      "width": "auto"
                     }
                   ],
                   "query": {
@@ -501,7 +449,7 @@
       },
       "layout": {
         "x": 0,
-        "y": 32,
+        "y": 31,
         "width": 12,
         "height": 12
       }
