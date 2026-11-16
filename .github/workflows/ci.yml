@@ -570,6 +570,33 @@ jobs:
           console.log('Recuperação limitada aos serviços previstos, opt-in explícito e Pods sem biblioteca .NET.');
           VALIDAR_INSTRUMENTACAO
 
+      - name: "🧪 Validar recuperação de atualização Datadog"
+        run: |
+          node <<'VALIDAR_RECUPERACAO_HELM'
+          const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
+          const y = fs.readFileSync('.github/workflows/datadog-observability.yml', 'utf8');
+          const bloco = y.match(/node <<'RECUPERAR_HELM'\r?\n([\s\S]*?)          RECUPERAR_HELM/);
+          assert(bloco);
+          const arquivo = path.join(process.env.RUNNER_TEMP, 'recuperar-helm.cjs');
+          fs.writeFileSync(arquivo, bloco[1].split(/\r?\n/).map(l => l.slice(10)).join('\n'));
+          const {revisaoRecuperavel} = require(arquivo);
+          const agora = Date.parse('2026-11-16T20:30:00Z');
+          const anterior = {revision: 9, status: 'deployed', chart: 'datadog-3.239.0', updated: '2026-11-16T16:00:00Z'};
+          const pendente = {revision: 10, status: 'pending-upgrade', chart: anterior.chart, updated: '2026-11-16T19:57:00Z'};
+          const validar = h => revisaoRecuperavel(h, agora, anterior.chart);
+          assert.equal(validar([anterior]), null);
+          assert.equal(validar([anterior, pendente]), 9);
+          assert.equal(validar([anterior, {...pendente, status:'pending-rollback'}]), 9);
+          assert.throws(() => validar([pendente]));
+          assert.throws(() => validar([anterior, {...pendente, updated:'2026-11-16T20:29:00Z'}]));
+          assert.throws(() => validar([anterior, {...pendente, updated:'inválida'}]));
+          assert.throws(() => validar([anterior, {...pendente, chart:'outro'}]));
+          assert.throws(() => validar([anterior, {...pendente, status:'pending-install'}]));
+          assert.match(bloco[1], /'rollback'/);
+          assert(!/uninstall|delete secret|--force/.test(bloco[1]));
+          console.log('Recuperação Helm restrita a revisão válida do mesmo chart; operações recentes, instalação inicial e histórico inválido bloqueados.');
+          VALIDAR_RECUPERACAO_HELM
+
       - name: "📊 Validar painéis por assunto e serviço"
         run: |
           node <<'VALIDAR_PAINEL'

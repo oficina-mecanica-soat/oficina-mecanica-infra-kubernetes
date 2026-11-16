@@ -126,6 +126,8 @@ Environment secret adicional:
 
 `DD_SITE` deve ser criado em **Settings > Environments > development > Environment variables**. O valor real de `DD_API_KEY` nunca deve ser versionado.
 
+Antes de atualizar o chart, o CD identifica atualização Helm interrompida há pelo menos 15 minutos. Havendo revisão anterior válida do mesmo chart, aguarda nós Ready e executa o rollback oficial para essa revisão; depois aplica a configuração atual. Operações recentes, instalação inicial pendente e histórico sem revisão válida interrompem o fluxo para investigação. Não remove Secrets Helm nem desinstala o Agent.
+
 ### Painéis por assunto e serviço
 
 - **[Infraestrutura](https://app.datadoghq.com/dashboard/axy-gix-3kr)** — [`infraestrutura-dashboard.json`](observability/datadog/infraestrutura-dashboard.json): CPU, memória, réplicas e reinícios em grupos separados para OS/API, Execução e Orçamento/Pagamento; disponibilidade da plataforma em grupo próprio. O escopo atual é Kubernetes; RDS/SQS exigem integração AWS e não são apresentados como gráficos vazios.
