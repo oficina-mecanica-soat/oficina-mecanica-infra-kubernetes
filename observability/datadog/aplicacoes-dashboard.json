@@ -65,11 +65,19 @@
           {
             "definition": {
               "type": "list_stream",
-              "title": "Logs da aplicação",
+              "title": "Eventos da aplicação",
               "requests": [
                 {
                   "response_format": "event_list",
                   "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "status",
+                      "width": "compact"
+                    },
                     {
                       "field": "content",
                       "width": "auto"
@@ -77,7 +85,7 @@
                   ],
                   "query": {
                     "data_source": "logs_stream",
-                    "query_string": "env:development service:oficina-mecanica-api -@Properties.RequestPath:\"/api/health\"",
+                    "query_string": "env:development service:oficina-mecanica-api @Properties.SourceContext:(OficinaMecanica* OR Serilog.AspNetCore.RequestLoggingMiddleware) -@Properties.http.route:\"/api/health\" -@Properties.RequestPath:\"/api/health\"",
                     "sort": {
                       "column": "timestamp",
                       "order": "desc"
@@ -96,11 +104,19 @@
           {
             "definition": {
               "type": "list_stream",
-              "title": "Logs de erro",
+              "title": "Avisos e erros da aplicação",
               "requests": [
                 {
                   "response_format": "event_list",
                   "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "status",
+                      "width": "compact"
+                    },
                     {
                       "field": "content",
                       "width": "auto"
@@ -108,7 +124,7 @@
                   ],
                   "query": {
                     "data_source": "logs_stream",
-                    "query_string": "env:development service:oficina-mecanica-api @Level:(Error OR Fatal)",
+                    "query_string": "env:development service:oficina-mecanica-api @Properties.SourceContext:(OficinaMecanica* OR Serilog.AspNetCore.RequestLoggingMiddleware) @Level:(Warning OR Error OR Fatal)",
                     "sort": {
                       "column": "timestamp",
                       "order": "desc"
@@ -123,6 +139,49 @@
               "width": 6,
               "height": 5
             }
+          },
+          {
+            "definition": {
+              "type": "list_stream",
+              "title": "Diagnóstico das bibliotecas — avisos e erros",
+              "requests": [
+                {
+                  "response_format": "event_list",
+                  "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "status",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "@Properties.SourceContext",
+                      "width": "auto"
+                    },
+                    {
+                      "field": "content",
+                      "width": "auto"
+                    }
+                  ],
+                  "query": {
+                    "data_source": "logs_stream",
+                    "query_string": "env:development service:oficina-mecanica-api @Properties.SourceContext:(Microsoft* OR System*) @Level:(Warning OR Error OR Fatal)",
+                    "sort": {
+                      "column": "timestamp",
+                      "order": "desc"
+                    }
+                  }
+                }
+              ]
+            },
+            "layout": {
+              "x": 0,
+              "y": 8,
+              "width": 12,
+              "height": 3
+            }
           }
         ]
       },
@@ -130,7 +189,7 @@
         "x": 0,
         "y": 1,
         "width": 12,
-        "height": 10
+        "height": 13
       }
     },
     {
@@ -182,11 +241,19 @@
           {
             "definition": {
               "type": "list_stream",
-              "title": "Logs da aplicação",
+              "title": "Eventos da aplicação",
               "requests": [
                 {
                   "response_format": "event_list",
                   "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "status",
+                      "width": "compact"
+                    },
                     {
                       "field": "content",
                       "width": "auto"
@@ -194,7 +261,7 @@
                   ],
                   "query": {
                     "data_source": "logs_stream",
-                    "query_string": "env:development service:oficina-mecanica-execucao -@Properties.RequestPath:\"/api/health\"",
+                    "query_string": "env:development service:oficina-mecanica-execucao @Properties.SourceContext:(OficinaMecanica* OR Serilog.AspNetCore.RequestLoggingMiddleware) -@Properties.http.route:\"/api/health\" -@Properties.RequestPath:\"/api/health\"",
                     "sort": {
                       "column": "timestamp",
                       "order": "desc"
@@ -213,11 +280,19 @@
           {
             "definition": {
               "type": "list_stream",
-              "title": "Logs de erro",
+              "title": "Avisos e erros da aplicação",
               "requests": [
                 {
                   "response_format": "event_list",
                   "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "status",
+                      "width": "compact"
+                    },
                     {
                       "field": "content",
                       "width": "auto"
@@ -225,7 +300,7 @@
                   ],
                   "query": {
                     "data_source": "logs_stream",
-                    "query_string": "env:development service:oficina-mecanica-execucao @Level:(Error OR Fatal)",
+                    "query_string": "env:development service:oficina-mecanica-execucao @Properties.SourceContext:(OficinaMecanica* OR Serilog.AspNetCore.RequestLoggingMiddleware) @Level:(Warning OR Error OR Fatal)",
                     "sort": {
                       "column": "timestamp",
                       "order": "desc"
@@ -240,14 +315,57 @@
               "width": 6,
               "height": 5
             }
+          },
+          {
+            "definition": {
+              "type": "list_stream",
+              "title": "Diagnóstico das bibliotecas — avisos e erros",
+              "requests": [
+                {
+                  "response_format": "event_list",
+                  "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "status",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "@Properties.SourceContext",
+                      "width": "auto"
+                    },
+                    {
+                      "field": "content",
+                      "width": "auto"
+                    }
+                  ],
+                  "query": {
+                    "data_source": "logs_stream",
+                    "query_string": "env:development service:oficina-mecanica-execucao @Properties.SourceContext:(Microsoft* OR System*) @Level:(Warning OR Error OR Fatal)",
+                    "sort": {
+                      "column": "timestamp",
+                      "order": "desc"
+                    }
+                  }
+                }
+              ]
+            },
+            "layout": {
+              "x": 0,
+              "y": 8,
+              "width": 12,
+              "height": 3
+            }
           }
         ]
       },
       "layout": {
         "x": 0,
-        "y": 11,
+        "y": 14,
         "width": 12,
-        "height": 10
+        "height": 13
       }
     },
     {
@@ -299,11 +417,19 @@
           {
             "definition": {
               "type": "list_stream",
-              "title": "Logs da aplicação",
+              "title": "Eventos da aplicação",
               "requests": [
                 {
                   "response_format": "event_list",
                   "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "status",
+                      "width": "compact"
+                    },
                     {
                       "field": "content",
                       "width": "auto"
@@ -311,7 +437,7 @@
                   ],
                   "query": {
                     "data_source": "logs_stream",
-                    "query_string": "env:development service:oficina-mecanica-orcamento-pagamento -@Properties.RequestPath:\"/api/health\"",
+                    "query_string": "env:development service:oficina-mecanica-orcamento-pagamento @Properties.SourceContext:(OficinaMecanica* OR Serilog.AspNetCore.RequestLoggingMiddleware) -@Properties.http.route:\"/api/health\" -@Properties.RequestPath:\"/api/health\"",
                     "sort": {
                       "column": "timestamp",
                       "order": "desc"
@@ -330,11 +456,19 @@
           {
             "definition": {
               "type": "list_stream",
-              "title": "Logs de erro",
+              "title": "Avisos e erros da aplicação",
               "requests": [
                 {
                   "response_format": "event_list",
                   "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "status",
+                      "width": "compact"
+                    },
                     {
                       "field": "content",
                       "width": "auto"
@@ -342,7 +476,7 @@
                   ],
                   "query": {
                     "data_source": "logs_stream",
-                    "query_string": "env:development service:oficina-mecanica-orcamento-pagamento @Level:(Error OR Fatal)",
+                    "query_string": "env:development service:oficina-mecanica-orcamento-pagamento @Properties.SourceContext:(OficinaMecanica* OR Serilog.AspNetCore.RequestLoggingMiddleware) @Level:(Warning OR Error OR Fatal)",
                     "sort": {
                       "column": "timestamp",
                       "order": "desc"
@@ -357,14 +491,57 @@
               "width": 6,
               "height": 5
             }
+          },
+          {
+            "definition": {
+              "type": "list_stream",
+              "title": "Diagnóstico das bibliotecas — avisos e erros",
+              "requests": [
+                {
+                  "response_format": "event_list",
+                  "columns": [
+                    {
+                      "field": "timestamp",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "status",
+                      "width": "compact"
+                    },
+                    {
+                      "field": "@Properties.SourceContext",
+                      "width": "auto"
+                    },
+                    {
+                      "field": "content",
+                      "width": "auto"
+                    }
+                  ],
+                  "query": {
+                    "data_source": "logs_stream",
+                    "query_string": "env:development service:oficina-mecanica-orcamento-pagamento @Properties.SourceContext:(Microsoft* OR System*) @Level:(Warning OR Error OR Fatal)",
+                    "sort": {
+                      "column": "timestamp",
+                      "order": "desc"
+                    }
+                  }
+                }
+              ]
+            },
+            "layout": {
+              "x": 0,
+              "y": 8,
+              "width": 12,
+              "height": 3
+            }
           }
         ]
       },
       "layout": {
         "x": 0,
-        "y": 21,
+        "y": 27,
         "width": 12,
-        "height": 10
+        "height": 13
       }
     },
     {
@@ -449,7 +626,7 @@
       },
       "layout": {
         "x": 0,
-        "y": 31,
+        "y": 40,
         "width": 12,
         "height": 12
       }

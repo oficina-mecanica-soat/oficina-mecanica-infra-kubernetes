@@ -656,6 +656,14 @@ jobs:
                     assert(q.includes('env:development') && !q.includes('env:production'));
                     for (const nome of servicos.values()) assert.equal(q.includes(nome), servico ? nome === servico : true);
                     assert(r.columns.length > 0);
+                    if (servico) {
+                      if (w.title.startsWith('Diagnóstico das bibliotecas')) {
+                        assert(q.includes('@Properties.SourceContext:(Microsoft* OR System*)'));
+                        assert(q.includes('@Level:(Warning OR Error OR Fatal)'));
+                      } else {
+                        assert(q.includes('@Properties.SourceContext:(OficinaMecanica* OR Serilog.AspNetCore.RequestLoggingMiddleware)'));
+                      }
+                    }
                     for (const c of r.columns) assert(c.field && ['auto', 'compact', 'full'].includes(c.width));
                   } else {
                     const q = /^(max|sum|p95):([a-z_.]+)\{(.+)\} by \{([^}]+)\}(\.as_count\(\))?$/.exec(r.q);

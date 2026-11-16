@@ -131,11 +131,13 @@ Antes de atualizar o chart, o CD identifica atualização Helm interrompida há 
 ### Painéis por assunto e serviço
 
 - **[Infraestrutura](https://app.datadoghq.com/dashboard/axy-gix-3kr)** — [`infraestrutura-dashboard.json`](observability/datadog/infraestrutura-dashboard.json): CPU, memória, réplicas e reinícios em grupos separados para OS/API, Execução e Orçamento/Pagamento; disponibilidade da plataforma em grupo próprio. O escopo atual é Kubernetes; RDS/SQS exigem integração AWS e não são apresentados como gráficos vazios.
-- **[Aplicações](https://app.datadoghq.com/dashboard/2g5-62n-jci)** — [`aplicacoes-dashboard.json`](observability/datadog/aplicacoes-dashboard.json): tráfego HTTP, latência p95 e logs por serviço; traces e IDs da Saga em grupo transversal. `hits` conta requisições, incluindo healthchecks, não ordens de serviço únicas.
+- **[Aplicações](https://app.datadoghq.com/dashboard/2g5-62n-jci)** — [`aplicacoes-dashboard.json`](observability/datadog/aplicacoes-dashboard.json): tráfego HTTP, latência p95, eventos da aplicação e diagnóstico das bibliotecas por serviço; traces e IDs da Saga em grupo transversal. `hits` conta requisições, incluindo healthchecks, não ordens de serviço únicas.
 
 As definições usam grupos nativos do Datadog e podem ser importadas em **Configure → Import dashboard JSON**. Preserve o histórico e confira o dashboard de destino antes de substituir seu conteúdo.
 
 Fontes: [métricas Kubernetes](https://docs.datadoghq.com/containers/kubernetes/data_collected/) e [métricas APM](https://docs.datadoghq.com/tracing/metrics/metrics_namespace/). CPU está em nanocores e memória em bytes. A métrica `duration` legada não deve ser usada para percentis.
+
+A origem do logger é identificada por `Properties.SourceContext`, mantendo a mensagem original das bibliotecas. Eventos próprios e avisos/erros de bibliotecas possuem streams distintos; SQL rotineiro não é apresentado como evento de negócio. A convenção de emissão está na [RFC-0006](https://github.com/oficina-mecanica-soat/oficina-mecanica-api/blob/develop/docs/architecture/rfcs/rfc-0006-observabilidade-centralizada-com-datadog.md).
 
 A validação no CI confere estrutura, fontes/escopo e agregações; não cria ou importa o painel nem comprova ingestão. Conferir nomes de operação, tags, conta/cluster, versão e intervalo no ambiente real. Réplicas disponíveis não substituem health funcional; ausência de telemetria não significa zero erros. Alertas precisam de baseline e teste de disparo/recuperação, conforme o [roteiro canônico](https://github.com/oficina-mecanica-soat/oficina-mecanica-api/blob/develop/docs/evidencias/validacao-integrada.md).
 
