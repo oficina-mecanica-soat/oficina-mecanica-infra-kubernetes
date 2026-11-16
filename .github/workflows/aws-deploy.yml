@@ -419,11 +419,13 @@ jobs:
             return ids.length > 0 && ids.every(id => informacoes.some(item => item.InstanceId === id && item.PingStatus === 'Online'));
           }
           async function recuperarInicializacao(ids) {
-            for (let tentativa = 0; tentativa < 60; tentativa++) {
+            // O SSM Agent pode aguardar até 30 minutos para renovar credenciais após falha (AWS Academy).
+            const tentativasGerenciamento = 210; // 35 minutos, incluindo registro e propagação.
+            for (let tentativa = 0; tentativa < tentativasGerenciamento; tentativa++) {
               const informacoes = consultar('ssm', 'describe-instance-information', '--filters',
                 JSON.stringify([{ Key: 'InstanceIds', Values: ids }])).InstanceInformationList;
               if (gerenciamentoPronto(ids, informacoes)) break;
-              if (tentativa === 59) throw Error('Gerenciamento dos nós indisponível; recuperação não executada.');
+              if (tentativa === tentativasGerenciamento - 1) throw Error('Gerenciamento dos nós indisponível após 35 minutos; recuperação não executada.');
               await new Promise(resolve => setTimeout(resolve, 10000));
             }
             const comandos = ['set -eu',

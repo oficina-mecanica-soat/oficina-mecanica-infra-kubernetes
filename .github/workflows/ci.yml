@@ -417,6 +417,8 @@ jobs:
           assert.equal(gerenciamentoPronto(['i-1'], [{ InstanceId: 'i-outro', PingStatus: 'Online' }]), false);
           assert.equal(gerenciamentoPronto(['i-1'], [{ InstanceId: 'i-1', PingStatus: 'ConnectionLost' }]), false);
           assert.equal(gerenciamentoPronto([], []), false);
+          assert.match(bloco[1], /const tentativasGerenciamento = 210/);
+          assert.match(bloco[1], /tentativa === tentativasGerenciamento - 1/);
           assert.equal(gerenciamentoPronto(['i-1'], [{ InstanceId: 'i-1', PingStatus: 'Online' }]), true);
           assert.match(bloco[1], /systemctl is-failed --quiet nodeadm-config.service/);
           assert.match(bloco[1], /systemctl is-active --quiet kubelet.service/);
