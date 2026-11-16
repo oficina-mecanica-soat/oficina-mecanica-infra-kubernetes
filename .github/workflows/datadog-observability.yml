@@ -224,7 +224,51 @@ jobs:
             --namespace "$DATADOG_NAMESPACE" \
             --timeout=10m
 
-      - name: "📊 16 · Exibir status dos workloads Datadog"
+      - name: "🧬 16 · Recuperar instrumentação dos serviços existentes"
+        run: |
+          node <<'RECUPERAR_INSTRUMENTACAO'
+          const cp = require('node:child_process');
+          const servicos = [
+            ['oficina-mecanica', 'oficina-mecanica-api'],
+            ['oficina-mecanica-execucao', 'oficina-mecanica-execucao'],
+            ['oficina-mecanica-orcamento-pagamento', 'oficina-mecanica-orcamento-pagamento']
+          ];
+          const executar = (...args) => cp.execFileSync('kubectl', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+          function instrumentado(pod) {
+            return pod.spec?.initContainers?.some(item => item.name === 'datadog-lib-dotnet-init') === true;
+          }
+          function requerRecuperacao(deployment, pods) {
+            const modelo = deployment.spec?.template?.metadata;
+            if (modelo?.labels?.['admission.datadoghq.com/enabled'] !== 'true'
+              || modelo?.annotations?.['admission.datadoghq.com/dotnet-lib.version'] !== '3.50.0')
+              throw Error('Instrumentação do Deployment diverge do contrato .NET aprovado.');
+            const ativos = pods.filter(pod => !pod.metadata?.deletionTimestamp);
+            return ativos.some(pod => !instrumentado(pod));
+          }
+          function main() {
+            for (const [namespace, nome] of servicos) {
+              const texto = executar('get', 'deployment', nome, '-n', namespace, '--ignore-not-found', '-o', 'json');
+              if (!texto.trim()) continue; // Primeira subida da plataforma precede os serviços.
+              const deployment = JSON.parse(texto);
+              if (deployment.spec.replicas === 0) continue;
+              const labels = Object.entries(deployment.spec.selector.matchLabels).map(([chave, valor]) => `${chave}=${valor}`).join(',');
+              const listar = () => JSON.parse(executar('get', 'pods', '-n', namespace, '-l', labels, '-o', 'json')).items;
+              if (requerRecuperacao(deployment, listar())) {
+                executar('rollout', 'restart', `deployment/${nome}`, '-n', namespace);
+                console.log(`${nome}: Pods sem biblioteca .NET encontrados; recuperação pela esteira solicitada.`);
+              }
+              executar('rollout', 'status', `deployment/${nome}`, '-n', namespace, '--timeout=600s');
+              const atuais = listar().filter(pod => !pod.metadata?.deletionTimestamp);
+              if (!atuais.length || atuais.some(pod => !instrumentado(pod)))
+                throw Error(`${nome}: biblioteca .NET não confirmada após rollout.`);
+              console.log(`${nome}: biblioteca .NET presente nos Pods ativos; ingestão deve ser validada no Datadog.`);
+            }
+          }
+          if (!module.parent) main();
+          module.exports = { instrumentado, requerRecuperacao };
+          RECUPERAR_INSTRUMENTACAO
+
+      - name: "📊 17 · Exibir status dos workloads Datadog"
         if: always()
         run: |
           kubectl get daemonsets,deployments,pods \
