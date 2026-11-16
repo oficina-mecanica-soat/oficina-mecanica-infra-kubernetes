@@ -541,6 +541,33 @@ jobs:
           console.log('Registry próprio, contratos, dependências e validação de apply/destroy preservados.');
           VALIDAR_REGISTRY_ORCAMENTO
 
+      - name: "🧬 Validar recuperação da instrumentação .NET"
+        run: |
+          node <<'VALIDAR_INSTRUMENTACAO'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const assert = require('node:assert/strict');
+          const workflow = fs.readFileSync('.github/workflows/datadog-observability.yml', 'utf8');
+          const bloco = workflow.match(/          node <<'RECUPERAR_INSTRUMENTACAO'\r?\n([\s\S]*?)          RECUPERAR_INSTRUMENTACAO/);
+          assert.ok(bloco);
+          const arquivo = path.join(process.env.RUNNER_TEMP, 'validar-instrumentacao.cjs');
+          fs.writeFileSync(arquivo, bloco[1].split(/\r?\n/).map(linha => linha.slice(10)).join('\n'));
+          const { instrumentado, requerRecuperacao } = require(arquivo);
+          const deployment = { spec: { template: { metadata: { labels: { 'admission.datadoghq.com/enabled': 'true' }, annotations: { 'admission.datadoghq.com/dotnet-lib.version': '3.50.0' } } } } };
+          const saudavel = { metadata: {}, spec: { initContainers: [{ name: 'datadog-lib-dotnet-init' }] } };
+          const ausente = { metadata: {}, spec: {} };
+          assert.equal(instrumentado(saudavel), true);
+          assert.equal(instrumentado(ausente), false);
+          assert.equal(requerRecuperacao(deployment, [saudavel]), false);
+          assert.equal(requerRecuperacao(deployment, [saudavel, ausente]), true);
+          assert.equal(requerRecuperacao(deployment, [saudavel, { ...ausente, metadata: { deletionTimestamp: 'agora' } }]), false);
+          assert.throws(() => requerRecuperacao({ spec: { template: { metadata: {} } } }, [ausente]));
+          assert.match(bloco[1], /if \(!texto.trim\(\)\) continue/);
+          assert.match(bloco[1], /if \(deployment.spec.replicas === 0\) continue/);
+          assert.match(bloco[1], /if \(requerRecuperacao\(deployment, listar\(\)\)\)/);
+          console.log('Recuperação limitada aos serviços previstos, opt-in explícito e Pods sem biblioteca .NET.');
+          VALIDAR_INSTRUMENTACAO
+
       - name: "📊 Validar painel da Saga sem AWS ou Datadog"
         run: |
           node <<'VALIDAR_PAINEL'

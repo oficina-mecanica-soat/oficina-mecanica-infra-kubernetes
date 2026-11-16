@@ -162,6 +162,8 @@ O deploy do Datadog ocorre automaticamente após mudanças relevantes e um `appl
 
 Para validar o runtime, confirme os nodes do EKS e os rollouts do Agent e Cluster Agent no namespace `datadog`, além dos parâmetros SSM publicados por esta esteira.
 
+Após Agent e Cluster Agent estarem prontos, o workflow de observabilidade confere a biblioteca .NET nos Pods dos três serviços previstos. Na retomada Academy, Pods podem ter sido criados enquanto a admissão Datadog estava indisponível: nesse caso, a esteira reinicia o rollout somente do Deployment com Pods sem a biblioteca e exige sua presença ao final. Serviços ainda ausentes na primeira subida ou escalados a zero não são criados/ativados por essa recuperação. Deployments instrumentados não são reiniciados. A conferência não altera imagens, flags de negócio ou IAM; ingestão de traces e métricas deve ser validada separadamente no Datadog.
+
 ## 🧪 Execução local
 
 Validar formatação:
