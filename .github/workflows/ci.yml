@@ -412,7 +412,15 @@ jobs:
           assert.ok(bloco);
           const arquivo = path.join(process.env.RUNNER_TEMP, 'validacao-imds.cjs');
           fs.writeFileSync(arquivo, bloco[1].split(/\r?\n/).map(linha => linha.slice(10)).join('\n'));
-          const { validarGrupo, validarInstancias, inventarioPronto, conferir } = require(arquivo);
+          const { validarGrupo, validarInstancias, inventarioPronto, conferir, gerenciamentoPronto } = require(arquivo);
+          assert.equal(gerenciamentoPronto(['i-1', 'i-2'], [{ InstanceId: 'i-1', PingStatus: 'Online' }]), false);
+          assert.equal(gerenciamentoPronto(['i-1'], [{ InstanceId: 'i-outro', PingStatus: 'Online' }]), false);
+          assert.equal(gerenciamentoPronto(['i-1'], [{ InstanceId: 'i-1', PingStatus: 'ConnectionLost' }]), false);
+          assert.equal(gerenciamentoPronto([], []), false);
+          assert.equal(gerenciamentoPronto(['i-1'], [{ InstanceId: 'i-1', PingStatus: 'Online' }]), true);
+          assert.match(bloco[1], /systemctl is-failed --quiet nodeadm-config.service/);
+          assert.match(bloco[1], /systemctl is-active --quiet kubelet.service/);
+          assert.match(bloco[1], /await recuperarInicializacao\(ids\)/);
           const grupo = { status: 'ACTIVE', nodeRole: 'arn:aws:iam::123456789012:role/LabRole', resources: { autoScalingGroups: [{ name: 'grupo' }] } };
           assert.deepEqual(validarGrupo(grupo, '123456789012'), ['grupo']);
           assert.throws(() => validarGrupo(grupo, '999999999999'));
