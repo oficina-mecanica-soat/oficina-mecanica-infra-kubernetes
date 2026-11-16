@@ -38,7 +38,7 @@ O bypass dispensa a revisão de outra pessoa, nunca o fluxo ou os checks. PRs po
 
 O ruleset de fluxo usa `strict_required_status_checks_policy=false` para não exigir promoção inversa entre branches; checks continuam obrigatórios e conflitos reais precisam ser resolvidos. O proprietário ainda pode alterar as configurações administrativas: o bloqueio depende dos rulesets ativos e da integridade dos workflows de validação.
 
-Repetir este padrão em cada novo repositório. A configuração detalhada está no [guia de GitHub Actions da API](https://github.com/geoscabio/oficina-mecanica-api/blob/develop/docs/deploy/github-actions.md#-proteções-obrigatórias-recomendadas).
+Repetir este padrão em cada novo repositório. A configuração detalhada está no [guia de GitHub Actions da API](https://github.com/oficina-mecanica-soat/oficina-mecanica-api/blob/develop/docs/deploy/github-actions.md#-proteções-obrigatórias-recomendadas).
 
 ## 🔁 Workflows
 
@@ -185,17 +185,17 @@ $env:TF_VAR_eks_node_role_name = "LabRole"
 terraform -chdir=infra/terraform/environments/dev plan
 ```
 
-## 🗓️ Ordem da Fase 3
+## 🗓️ Ordem das esteiras
 
-Esta esteira deve rodar depois da VPC e antes do deploy da API no EKS.
+Esta é a segunda esteira de apply, depois da VPC. Publica EKS, os três registries, ingressos privados e plataforma Datadog; cada aplicação valida seu próprio rollout.
 
 ```text
-infra-vpc -> infra-kubernetes -> api -> infra-api-gateway
+infra-vpc -> infra-kubernetes -> infra-rds -> aplicações -> infra-api-gateway
 ```
 
-RDS e Kubernetes podem evoluir em paralelo depois que a VPC estiver disponível.
+RDS vem depois de Kubernetes: seu bootstrap de banco próprio usa um Job no EKS. A [ordem completa](https://github.com/oficina-mecanica-soat/oficina-mecanica-api#deploy-aws) inclui Execução e Orçamento/Pagamento antes da implantação única inicial do Gateway.
 
-Documentação central e arquitetura completa: [README da Oficina Mecânica API](https://github.com/geoscabio/oficina-mecanica-api).
+Documentação central e arquitetura completa: [README da Oficina Mecânica API](https://github.com/oficina-mecanica-soat/oficina-mecanica-api).
 
 ### Reconciliação de destroy após reset do laboratório
 
