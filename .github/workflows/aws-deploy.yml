@@ -415,6 +415,40 @@ jobs:
             return opcoes?.State === 'applied' && opcoes.HttpEndpoint === 'enabled'
               && opcoes.HttpTokens === 'required' && opcoes.HttpPutResponseHopLimit === 2;
           }
+          function gerenciamentoPronto(ids, informacoes) {
+            return ids.length > 0 && ids.every(id => informacoes.some(item => item.InstanceId === id && item.PingStatus === 'Online'));
+          }
+          async function recuperarInicializacao(ids) {
+            for (let tentativa = 0; tentativa < 60; tentativa++) {
+              const informacoes = consultar('ssm', 'describe-instance-information', '--filters',
+                JSON.stringify([{ Key: 'InstanceIds', Values: ids }])).InstanceInformationList;
+              if (gerenciamentoPronto(ids, informacoes)) break;
+              if (tentativa === 59) throw Error('Gerenciamento dos nós indisponível; recuperação não executada.');
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
+            const comandos = ['set -eu',
+              'if systemctl is-failed --quiet nodeadm-config.service; then',
+              '  systemctl reset-failed nodeadm-config.service nodeadm-run.service',
+              '  systemctl start nodeadm-config.service',
+              '  systemctl start nodeadm-run.service',
+              'fi',
+              'systemctl is-active --quiet kubelet.service'];
+            const comando = consultar('ssm', 'send-command', '--document-name', 'AWS-RunShellScript',
+              '--instance-ids', ...ids, '--timeout-seconds', '900',
+              '--parameters', JSON.stringify({ commands: comandos, executionTimeout: ['900'] }),
+              '--comment', 'Recuperar inicialização EKS interrompida pelo encerramento Academy').Command.CommandId;
+            for (let tentativa = 0; tentativa < 100; tentativa++) {
+              const resultados = consultar('ssm', 'list-command-invocations', '--command-id', comando).CommandInvocations;
+              if (resultados.some(item => ['Failed', 'Cancelled', 'TimedOut'].includes(item.Status)))
+                throw Error('Inicialização dos nós não recuperada; conferir execução SSM pela esteira.');
+              if (resultados.length === ids.length && resultados.every(item => ids.includes(item.InstanceId) && item.Status === 'Success')) {
+                console.log('Kubelet ativo nos nós do grupo; somente inicializações com falha foram retomadas.');
+                return;
+              }
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
+            throw Error('Prazo de recuperação da inicialização EKS excedido.');
+          }
           async function main() {
             const tf = nome => cp.execFileSync('terraform', [`-chdir=${process.env.TF_WORKING_DIRECTORY}`, 'output', '-raw', nome], { encoding: 'utf8' }).trim();
             const cluster = tf('eks_cluster_name');
@@ -437,6 +471,7 @@ jobs:
               validarInstancias(grupos, nomes, atuais, cluster);
               if (atuais.every(item => conferir(item.MetadataOptions))) {
                 console.log(`IMDSv2 obrigatório e hop limit 2 confirmados em ${ids.length} node(s) do grupo acadêmico.`);
+                await recuperarInicializacao(ids);
                 return;
               }
               await new Promise(resolve => setTimeout(resolve, 2000));
@@ -444,7 +479,7 @@ jobs:
             throw new Error('Configuração IMDSv2 não foi confirmada no prazo.');
           }
           if (!module.parent) main().catch(error => { console.error(error.message); process.exitCode = 1; });
-          module.exports = { validarGrupo, validarInstancias, inventarioPronto, conferir };
+          module.exports = { validarGrupo, validarInstancias, inventarioPronto, conferir, gerenciamentoPronto };
           CONFIGURAR_IMDS_ACADEMICO
 
       - name: "🔎 09 · Validar Kubernetes real após apply"
