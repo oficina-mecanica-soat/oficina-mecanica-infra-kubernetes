@@ -412,7 +412,7 @@ jobs:
           assert.ok(bloco);
           const arquivo = path.join(process.env.RUNNER_TEMP, 'validacao-imds.cjs');
           fs.writeFileSync(arquivo, bloco[1].split(/\r?\n/).map(linha => linha.slice(10)).join('\n'));
-          const { validarGrupo, validarInstancias, conferir } = require(arquivo);
+          const { validarGrupo, validarInstancias, inventarioPronto, conferir } = require(arquivo);
           const grupo = { status: 'ACTIVE', nodeRole: 'arn:aws:iam::123456789012:role/LabRole', resources: { autoScalingGroups: [{ name: 'grupo' }] } };
           assert.deepEqual(validarGrupo(grupo, '123456789012'), ['grupo']);
           assert.throws(() => validarGrupo(grupo, '999999999999'));
@@ -425,6 +425,13 @@ jobs:
           assert.throws(() => validarInstancias(grupos, ['grupo'], [], 'cluster'));
           assert.throws(() => validarInstancias(grupos, ['outro-grupo'], [instancia], 'cluster'));
           assert.throws(() => validarInstancias(grupos, ['grupo'], [{ ...instancia, State: { Name: 'stopped' } }], 'cluster'));
+          const primeiro = { AutoScalingGroupName:'grupo', Instances:[{InstanceId:'i-1',LifecycleState:'InService'}] };
+          assert.equal(inventarioPronto([primeiro],['grupo'],2),false);
+          const completo = {...primeiro,Instances:[...primeiro.Instances,{InstanceId:'i-2',LifecycleState:'InService'}]};
+          assert.equal(inventarioPronto([completo],['grupo'],2),true);
+          assert.equal(inventarioPronto([{...completo,Instances:[...primeiro.Instances,{InstanceId:'i-2',LifecycleState:'Pending'}]}],['grupo'],2),false);
+          assert.throws(()=>inventarioPronto([completo],['outro'],2));
+          assert.throws(()=>inventarioPronto([completo],['grupo'],undefined));
           const opcoes = { State: 'applied', HttpEndpoint: 'enabled', HttpTokens: 'required', HttpPutResponseHopLimit: 2 };
           assert.ok(conferir(opcoes));
           for (const invalida of [{ ...opcoes, State: 'pending' }, { ...opcoes, HttpTokens: 'optional' }, { ...opcoes, HttpPutResponseHopLimit: 1 }, { ...opcoes, HttpEndpoint: 'disabled' }]) assert.equal(conferir(invalida), false);
