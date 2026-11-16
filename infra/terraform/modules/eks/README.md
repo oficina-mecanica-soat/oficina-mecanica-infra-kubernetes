@@ -23,7 +23,7 @@ $env:TF_VAR_eks_node_role_name = "<LabEksNodeRole-...>"
 - Os nós usam subnets privadas.
 - O endpoint privado do cluster fica habilitado.
 - O endpoint público fica habilitado para facilitar a operação no laboratório.
-- O ambiente `dev` limita o Node Group a `desired_size = 1`, `min_size = 1` e `max_size = 1` para evitar crescimento de custo.
+- O ambiente `dev` limita o Node Group a `desired_size = 2`, `min_size = 1` e `max_size = 2` para evitar crescimento de custo.
 - O Metrics Server usa uma réplica nesse node único; a versão `v0.8.1-eksbuild.24` foi conferida na API EKS para Kubernetes 1.33. Não substitui Datadog, histórico de métricas ou a validação de capacidade para escalar workloads.
 
 ## 🔒 Endurecimento recomendado
