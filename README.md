@@ -1,58 +1,43 @@
 # ☸️ Oficina Mecânica Infra Kubernetes
 
-Repositório da esteira Kubernetes da Fase 3 do Tech Challenge.
+Plataforma compartilhada: EKS, nodes, três repositórios ECR, NLB/listeners privados e Datadog Agent/Cluster Agent. Os workloads são implantados pelas esteiras das aplicações.
 
-## 🎯 Objetivo
+## 🏗️ Recursos provisionados por esta esteira
 
-Provisionar e operar a base Kubernetes da solução da Oficina Mecânica em AWS, mantendo o mesmo padrão de CI/CD usado na API e nas demais esteiras de infraestrutura.
+| Escopo | Recursos criados ou configurados | Consumidores |
+| --- | --- | --- |
+| Computação compartilhada | Cluster EKS, Managed Node Group e add-on Metrics Server | Os três microsserviços e componentes da plataforma |
+| Rede privada compartilhada | Um NLB interno, security group e regras de tráfego entre NLB e nodes | API Gateway via VPC Link |
+| OS / API | ECR `oficina-mecanica-api`, target group, associação ao grupo de nodes e listener TCP/80 → NodePort 30080 | Deploy da API e integração privada de OS no Gateway |
+| Execução | ECR `oficina-mecanica-execucao`, target group próprio, associação ao grupo de nodes e listener TCP/8081 → NodePort 30081 | Deploy do Execução e integração privada de Execução no Gateway |
+| Orçamento/Pagamento | ECR `oficina-mecanica-orcamento-pagamento`, target group próprio, associação ao grupo de nodes e listener TCP/8082 → NodePort 30082 | Deploy de Orçamento/Pagamento e integração privada correspondente no Gateway |
+| Contratos | Parâmetros SSM de EKS, registries, listeners, NodePorts e prontidão da plataforma | Esteiras RDS, aplicações, Auth e Gateway |
+| Observabilidade | Datadog Agent e Cluster Agent instalados/configurados por Helm no workflow `datadog-observability.yml`, chamado pelo CD | Métricas de Kubernetes, coleta de logs e recepção de traces dos serviços |
 
-## 📌 Responsabilidades
+Os nomes dos ECRs acima são os padrões configuráveis do ambiente. O NLB e o EKS são compartilhados; os três ECRs, listeners e target groups são distintos. Esta esteira cria os registries, mas **as esteiras das aplicações publicam as imagens**.
 
-- Criar o cluster EKS de `development`.
-- Criar o Managed Node Group.
-- Criar os repositórios ECR das imagens da API, Execução e Orçamento/Pagamento.
-- Consumir os outputs da VPC publicados no SSM Parameter Store.
-- Publicar outputs de Kubernetes e ECR no SSM para as próximas esteiras.
-- Controlar `apply` e `destroy` por workflow com validações reais na AWS.
-- Instalar e validar Datadog Agent e Cluster Agent no EKS.
+### 🔎 O que pertence às esteiras dos microsserviços
 
-## 🔀 Fluxo Git
-
-```text
-branch de trabalho -> PR develop -> deploy development -> PR release -> deploy homologation -> PR main -> deploy production
-```
-
-Branches protegidas esperadas:
-
-- `develop`
-- `release`
-- `release/*`
-- `main`
-
-As branches protegidas usam dois rulesets ativos:
-
-- **🔒 Proteção Git Flow, sem bypass:** exige PR, conversas resolvidas, checks `🔀 01 · Validar fluxo de branches` e `🚦 03 · Quality gate` aprovados; bloqueia push direto, force push e deleção. A lista de bypass fica vazia, inclusive para admins e maintainers.
-- **👥 Aprovação de PR:** exige uma aprovação, descarta aprovações antigas e exige revisão por alguém diferente do último autor do push. Somente esta regra permite bypass via PR para `geoscabio`, `sousagabriel14`, maintainers e admins.
-
-O bypass dispensa a revisão de outra pessoa, nunca o fluxo ou os checks. PRs podem ser abertos de qualquer origem, mas o merge exige `branch de trabalho -> develop -> release -> main`. Hotfix permanece pós-entrega, sem exceção habilitada.
-
-O ruleset de fluxo usa `strict_required_status_checks_policy=false` para não exigir promoção inversa entre branches; checks continuam obrigatórios e conflitos reais precisam ser resolvidos. O proprietário ainda pode alterar as configurações administrativas: o bloqueio depende dos rulesets ativos e da integridade dos workflows de validação.
-
-Repetir este padrão em cada novo repositório. A configuração detalhada está no [guia de GitHub Actions da API](https://github.com/oficina-mecanica-soat/oficina-mecanica-api/blob/develop/docs/deploy/github-actions.md#-proteções-obrigatórias-recomendadas).
-
-## 🔁 Workflows
-
-| Workflow | Responsabilidade |
+| Esteira | Recursos que ela provisiona no ambiente compartilhado |
 | --- | --- |
-| `🧪 CI Development` | Validar PR para `develop`, Git Flow e Terraform quando houver mudança deployable. |
-| `🔎 CI Release` | Validar PR para `release` ou `release/**`, Git Flow e Terraform quando houver mudança deployable. |
-| `🛡️ CI Production` | Validar PR para `main`, Git Flow e Terraform quando houver mudança deployable. |
-| `🚀 CD Development` | Detectar mudança deployable em `develop`, chamar o deploy real e abrir PR para `release` quando habilitado. |
-| `☁️ AWS Deploy` | Resolver `apply`/`destroy`, gerar plano, aplicar Terraform, validar AWS e publicar state em cache. |
-| `🔀 CD Release` | Registrar deploy lógico em `homologation` e abrir PR para `main` quando habilitado. |
-| `🏁 CD Production` | Registrar deploy lógico em `production`. |
+| [API / OS](https://github.com/oficina-mecanica-soat/oficina-mecanica-api) | Namespace, Deployment, ConfigMap, Secret, Service NodePort e HPA da API; entrada FIFO, DLQ e contratos de OS |
+| [Execução](https://github.com/oficina-mecanica-soat/oficina-mecanica-execucao) | Namespace, Deployment, Secret e Service NodePort de Execução; tabela DynamoDB, entrada FIFO, DLQ e contratos próprios; não cria ConfigMap ou HPA no Terraform atual |
+| [Orçamento/Pagamento](https://github.com/oficina-mecanica-soat/oficina-mecanica-orcamento-pagamento) | Namespace, Deployment, ConfigMap, Secret, Service NodePort e HPA do serviço; entrada FIFO, DLQ e contratos próprios |
 
-O desenho dos workflows segue a API. A diferença fica apenas no conteúdo técnico de cada job: aqui a validação e o deploy são de Terraform/EKS/ECR. O título de execução do `🔀 CD Release` é `🔀 Registrar deploy em release`; produção só é registrada depois do merge em `main`.
+Bancos SQL e logins são preparados pela [esteira RDS](https://github.com/oficina-mecanica-soat/oficina-mecanica-infra-rds). A função de autenticação e as rotas públicas pertencem às esteiras Auth e Gateway. Esta esteira Kubernetes não substitui esses provisionamentos nem instala as aplicações de negócio por conta própria.
+
+Fontes: [módulos EKS/ECR](infra/terraform/environments/dev/main.tf), [ingresso privado de OS](infra/terraform/environments/dev/private-ingress.tf), [ingressos dos participantes](infra/terraform/environments/dev/microsservicos-private-ingress.tf) e [workflow Datadog](.github/workflows/datadog-observability.yml).
+
+<a id="registries-e-ingresso-privado"></a>
+
+## 📦 Registries e ingresso privado
+
+Os ECRs da API, Execução e Orçamento/Pagamento pertencem a esta esteira; cada aplicação publica sua imagem. Contratos em `/oficina-mecanica/development/kubernetes/` incluem `cluster_name`, `cluster_endpoint`, `cluster_security_group_id`, `node_group_name`, `ecr_repository_url`, `execucao_ecr_repository_url` e `orcamento_pagamento_ecr_repository_url`.
+
+Listeners privados: OS 80 → NodePort 30080; Execução 8081 → 30081; Orçamento/Pagamento 8082 → 30082. Gateway usa VPC Link. Não há acesso público direto ao workload.
+
+LabRole é compartilhada no ambiente acadêmico. Os nodes usam IMDSv2 obrigatório e hop limit 2 para a identidade dos workloads; isso não fornece isolamento IAM por aplicação. Após retomar o laboratório, a recuperação é feita pela própria esteira, sem alteração manual dos nodes.
+
 
 ## 🌐 Dependência da VPC
 
@@ -63,36 +48,6 @@ Antes de aplicar Kubernetes, a VPC precisa estar pronta e publicar os parâmetro
 | `/oficina-mecanica/development/status/vpc` | Deve estar com valor `ready`. |
 | `/oficina-mecanica/development/vpc/vpc_id` | VPC usada pelo EKS. |
 | `/oficina-mecanica/development/vpc/private_subnet_ids` | Subnets privadas usadas pelo cluster e pelo node group. |
-
-## 📤 Outputs publicados
-
-Depois do apply, esta esteira publica:
-
-| Parâmetro SSM | Uso |
-| --- | --- |
-| `/oficina-mecanica/development/status/kubernetes` | Marca Kubernetes como pronto para dependentes. |
-| `/oficina-mecanica/development/kubernetes/cluster_name` | Nome do cluster EKS. |
-| `/oficina-mecanica/development/kubernetes/cluster_endpoint` | Endpoint do cluster EKS. |
-| `/oficina-mecanica/development/kubernetes/cluster_security_group_id` | Security group principal do cluster. |
-| `/oficina-mecanica/development/kubernetes/node_group_name` | Nome do Managed Node Group. |
-| `/oficina-mecanica/development/kubernetes/ecr_repository_name` | Nome do ECR da API. |
-| `/oficina-mecanica/development/kubernetes/ecr_repository_url` | URL do ECR da API. |
-| `/oficina-mecanica/development/kubernetes/execucao_ecr_repository_name` | Nome do ECR do serviço de Execução: `oficina-mecanica-execucao`. |
-| `/oficina-mecanica/development/kubernetes/execucao_ecr_repository_url` | URL do ECR do serviço de Execução. |
-
-### ECR de Orçamento/Pagamento
-
-O módulo `ecr_orcamento_pagamento` reutiliza `modules/ecr`, preservando tags imutáveis, varredura no push e o ciclo acadêmico de destroy. O nome padrão é `oficina-mecanica-orcamento-pagamento`. Publica dois contratos String sob `/oficina-mecanica/development/kubernetes`: `orcamento_pagamento_ecr_repository_name` e `orcamento_pagamento_ecr_repository_url`, com outputs Terraform homônimos. O status compartilhado depende também desses recursos.
-
-A esteira confere registry, outputs e contratos após apply e comprova ausência após destroy, preservando bloqueio em erros de acesso. Não publica imagem nem implanta a aplicação; o consumidor é a esteira própria de Orçamento/Pagamento. Não renomeia recursos existentes de API ou Execução.
-
-### ECR do Execução — contrato da Fase 4
-
-Conforme ADR-0023/25 e F4-04, o ECR continua sob ownership desta infraestrutura. O módulo `ecr_execucao` reutiliza `modules/ecr`, com as mesmas políticas da API: tags imutáveis, varredura no push e remoção de imagens no destroy acadêmico. O nome padrão é `oficina-mecanica-execucao`, configurado por `execucao_ecr_repository_name`. Não altera o endereço Terraform `module.ecr` nem os contratos existentes da API.
-
-Os dois novos parâmetros são `String`, sem dados sensíveis, e usam `kubernetes_ssm_prefix`. Os outputs Terraform têm os mesmos nomes dos sufixos SSM. O status `ready` depende também da criação do novo registry e de seus contratos. Após apply autorizado, a esteira compara a URL no ECR, os outputs Terraform e os dois parâmetros SSM; no destroy, confirma ausência do registry identificado no state e dos parâmetros. Falhas de permissão/autenticação continuam bloqueando a operação.
-
-Este PR prepara infraestrutura; não publica imagem, não cria workload, DynamoDB ou SQS e não conecta consumidores. O PR seguinte do Execução consumirá esses contratos, eliminando a configuração paralela por `ECR_REPOSITORY_NAME`.
 
 ## 🔐 Variáveis e secrets
 
@@ -126,8 +81,6 @@ Environment secret adicional:
 
 `DD_SITE` deve ser criado em **Settings > Environments > development > Environment variables**. O valor real de `DD_API_KEY` nunca deve ser versionado.
 
-Antes de atualizar o chart, o CD identifica atualização Helm interrompida há pelo menos 15 minutos. Havendo revisão anterior válida do mesmo chart, aguarda nós Ready e executa o rollback oficial para essa revisão; depois aplica a configuração atual. Operações recentes, instalação inicial pendente e histórico sem revisão válida interrompem o fluxo para investigação. Não remove Secrets Helm nem desinstala o Agent.
-
 ### Painéis por assunto e serviço
 
 - **[Infraestrutura](https://app.datadoghq.com/dashboard/axy-gix-3kr)** — [`infraestrutura-dashboard.json`](observability/datadog/infraestrutura-dashboard.json): CPU, memória, réplicas e reinícios em grupos separados para OS/API, Execução e Orçamento/Pagamento; disponibilidade da plataforma em grupo próprio. O escopo atual é Kubernetes; RDS/SQS exigem integração AWS e não são apresentados como gráficos vazios.
@@ -139,37 +92,7 @@ Fontes: [métricas Kubernetes](https://docs.datadoghq.com/containers/kubernetes/
 
 A origem do logger é identificada por `Properties.SourceContext`, mantendo a mensagem original das bibliotecas. Eventos próprios e avisos/erros de bibliotecas possuem streams distintos; SQL rotineiro não é apresentado como evento de negócio. A convenção de emissão está na [RFC-0006](https://github.com/oficina-mecanica-soat/oficina-mecanica-api/blob/develop/docs/architecture/rfcs/rfc-0006-observabilidade-centralizada-com-datadog.md).
 
-A validação no CI confere estrutura, fontes/escopo e agregações; não cria ou importa o painel nem comprova ingestão. Conferir nomes de operação, tags, conta/cluster, versão e intervalo no ambiente real. Réplicas disponíveis não substituem health funcional; ausência de telemetria não significa zero erros. Alertas precisam de baseline e teste de disparo/recuperação, conforme o [roteiro canônico](https://github.com/oficina-mecanica-soat/oficina-mecanica-api/blob/develop/docs/evidencias/validacao-integrada.md).
-
-## 🧭 Controle apply/destroy
-
-O deploy real é controlado por:
-
-```text
-infra/terraform/environments/dev/terraform-action.env
-```
-
-Para subir ou atualizar Kubernetes:
-
-```env
-TERRAFORM_ACTION=apply
-```
-
-Para destruir Kubernetes:
-
-```env
-TERRAFORM_ACTION=destroy
-```
-
-Regra de segurança: `destroy` só é aceito quando `terraform-action.env` muda no próprio PR/merge. Isso evita destruir recursos em execuções futuras por acidente.
-
-Com `AWS_DEPLOY_ENABLED=false` (ou ausente), o CD não chama Terraform nem Datadog. Mudança implantável bloqueada não abre promoção para release como se tivesse sido aplicada; mudanças apenas documentais mantêm a promoção existente. O workflow reutilizável AWS também exige habilitação explícita. `terraform-action.env` permanece inalterado; habilitar o controle não substitui o PR dedicado exigido para destroy. Avisar Gabriel para criar o laboratório e atualizar os environments antes da futura janela de validação.
-
-O deploy do Datadog ocorre automaticamente após mudanças relevantes e um `apply` bem-sucedido. O `workflow_dispatch` permanece como contingência manual. Em `destroy`, a esteira não tenta instalar Datadog.
-
-Para validar o runtime, confirme os nodes do EKS e os rollouts do Agent e Cluster Agent no namespace `datadog`, além dos parâmetros SSM publicados por esta esteira.
-
-Após Agent e Cluster Agent estarem prontos, o workflow de observabilidade confere a biblioteca .NET nos Pods dos três serviços previstos. Na retomada Academy, Pods podem ter sido criados enquanto a admissão Datadog estava indisponível: nesse caso, a esteira reinicia o rollout somente do Deployment com Pods sem a biblioteca e exige sua presença ao final. Serviços ainda ausentes na primeira subida ou escalados a zero não são criados/ativados por essa recuperação. Deployments instrumentados não são reiniciados. A conferência não altera imagens, flags de negócio ou IAM; ingestão de traces e métricas deve ser validada separadamente no Datadog.
+A validação no CI confere estrutura, fontes/escopo e agregações; não cria ou importa o painel nem comprova ingestão. Conferir nomes de operação, tags, conta/cluster, versão e intervalo no ambiente real. Réplicas disponíveis não substituem health funcional; ausência de telemetria não significa zero erros. Alertas precisam de baseline e teste de disparo/recuperação, conforme o [roteiro de referência](https://github.com/oficina-mecanica-soat/oficina-mecanica-api/blob/develop/docs/deploy/deploy-aws.md).
 
 ## 🧪 Execução local
 
@@ -194,94 +117,16 @@ $env:TF_VAR_eks_node_role_name = "LabRole"
 terraform -chdir=infra/terraform/environments/dev plan
 ```
 
-## 🗓️ Ordem das esteiras
+<a id="operação-e-documentação"></a>
 
-Esta é a segunda esteira de apply, depois da VPC. Publica EKS, os três registries, ingressos privados e plataforma Datadog; cada aplicação valida seu próprio rollout.
+## 🧭 Operação e documentação
 
-```text
-infra-vpc -> infra-kubernetes -> infra-rds -> aplicações -> infra-api-gateway
-```
+- [Visão geral, arquitetura e ordem das esteiras](https://github.com/oficina-mecanica-soat/oficina-mecanica-api#deploy-aws).
+- [Configuração, primeira aplicação e recuperação após Reset](https://github.com/oficina-mecanica-soat/oficina-mecanica-api/blob/develop/docs/deploy/deploy-aws.md).
+- [Collection consolidada e ambientes Local/Development](https://github.com/oficina-mecanica-soat/oficina-mecanica-api/blob/develop/docs/evidencias/postman.md).
 
-RDS vem depois de Kubernetes: seu bootstrap de banco próprio usa um Job no EKS. A [ordem completa](https://github.com/oficina-mecanica-soat/oficina-mecanica-api#deploy-aws) inclui Execução e Orçamento/Pagamento antes da implantação única inicial do Gateway.
+Todo provisionamento, atualização e destroy na AWS ocorre pelas esteiras oficiais. O controle é `infra/terraform/environments/dev/terraform-action.env`; destroy exige alteração dedicada e verificação dos consumidores. `AWS_DEPLOY_ENABLED` autoriza a janela real, e `AUTO_PR_ENABLED` controla somente a abertura de promoções. Alterar uma Variable não dispara o CD.
 
-Documentação central e arquitetura completa: [README da Oficina Mecânica API](https://github.com/oficina-mecanica-soat/oficina-mecanica-api).
+Um ambiente disponível pode ser testado sem destroy. Sem estado compatível, alguns owners exigem primeiro uma recuperação por destroy dedicado com inventário vazio comprovado. Não apague recursos ou caches para contornar o bloqueio; consulte o guia antes de iniciar uma conta ou retomar um laboratório.
 
-### Reconciliação de destroy após reset do laboratório
-
-O destroy restaura o cache Terraform existente e usa uma configuração temporária sem data sources de contratos SSM. O state original não é editado nem descartado: o provider confirma os recursos ausentes durante o plano de destruição. Somente o plano salvo, sem criação ou atualização, pode ser aplicado. Ao terminar, a esteira verifica que o state não contém recursos gerenciados antes de persistir o cache final. Falhas de autenticação, permissão ou rede bloqueiam a operação.
-
-Na API, vínculos Kubernetes só podem ser retirados por blocos declarativos removed com destroy=false após ResourceNotFoundException confirmar que o EKS registrado no state não existe. Com EKS existente, permanece a configuração normal de destroy. Não há uso de state rm, import ou mv.
-
-O retorno isolado de terraform-action.env para apply ainda é reconhecido como mudança de infraestrutura pelo detector de CD; não faça esse retorno enquanto não existir separação segura entre rearmar e provisionar. Preserve destroy após a reconciliação e só autorize nova subida em tarefa própria.
-
-#### State isolado por conta AWS
-
-As chaves de cache incluem o ID da conta retornado pela autenticação AWS, antes do ambiente e da execução. A restauração só pesquisa esse escopo, sem fallback para chaves históricas sem conta. Os caches anteriores permanecem preservados como histórico do laboratório encerrado 058264466885, inclusive quando contêm referências que a conta atual não consegue consultar. AccessDenied não é convertido em ausência.
-
-Sem cache no escopo atual, a esteira bloqueia apply. Um destroy dedicado só pode iniciar state novo depois de consultas read-only confirmarem que não existem recursos ou contratos do projeto na conta atual. Recursos internos do laboratório são preservados. Depois disso, o plano exclusivo de destroy e a validação de state vazio produzem o cache usado pelas próximas execuções da mesma conta. Em laboratório com recursos existentes e cache ausente, é necessário recuperar o state correto; o bootstrap não libera provisionamento automático.
-
-## Validação deste incremento
-
-Validação local com Terraform 1.15.8: formatação, inicialização sem backend e validação aprovadas; quatro testes Node dos guardrails aprovados. O Terraform global 1.17.0 não atende à restrição do repositório; foi usado o executável 1.15.8 já disponível, sem alterar essa restrição. O CI repete as verificações antes do merge. Não há prova de criação/remoção real sem a janela AWS autorizada. O próximo apply criará um ECR e dois parâmetros SSM adicionais e atualizará o status compartilhado; a mesma esteira continuará gerenciando seu ciclo de vida.
-
-## Preparação da subida — F4-04
-
-### Recuperação do acesso IMDSv2 acadêmico
-
-O detector do CD considera deployáveis tanto `infra/terraform/*` quanto os workflows `aws-deploy.yml` e `cd-development.yml`, pois mudanças na execução operacional precisam ser aplicadas. Mudanças exclusivas de CI/README não acionam AWS; Datadog mantém seu detector especializado. A habilitação `AWS_DEPLOY_ENABLED` continua obrigatória e independente da detecção.
-
-Na validação remota do Execução, o node apresentou `HttpTokens=required` e hop limit `1`; o SDK no Pod falhou ao obter token IMDSv2. Gabriel aprovou propor hop limit `2`, preservando tokens obrigatórios e reconhecendo acesso possível por outros Pods do mesmo node, conforme complemento da ADR-0025 na API. Não oferece isolamento IAM por aplicação.
-
-Após apply e persistência do state, a esteira existente configura somente as instâncias atuais dos Auto Scaling Groups retornados pelo node group gerenciado. Exige grupo ACTIVE, `LabRole` da conta autenticada, instâncias running e tag do cluster correspondente. Aplica endpoint habilitado, tokens obrigatórios e hop limit `2`, confirmando o estado aplicado; consulta ou alteração negada interrompe a esteira. Destroy não executa essa etapa. Não altera IAM/trust, não lê credenciais IMDS e não copia secrets do runner para Pods.
-
-A configuração operacional é por instância, fora do plano Terraform, e não muda o launch template gerenciado pelo EKS. Não cria template próprio nem substitui o node group existente. Uma instância substituída posteriormente pode voltar ao padrão: reexecutar a esteira Kubernetes antes de validar o runtime remoto e conferir novamente os valores reais. Este é um limite explícito da exceção acadêmica, não uma configuração durável de novos nodes.
-
-Ao encerrar a sessão Academy, o Auto Scaling pode criar substitutos enquanto as permissões do laboratório estão suspensas. A inicialização `nodeadm-config` pode falhar ao consultar EC2 e deixar o kubelet sem iniciar, mesmo com o grupo ACTIVE. Na retomada, a mesma etapa aguarda até 35 minutos os nós inventariados ficarem Online no Systems Manager (o [SSM Agent](https://github.com/aws/amazon-ssm-agent#config-property-definitions) pode aguardar até 30 minutos antes de renovar credenciais após falha) e envia um comando fixo pelo CD: retoma apenas `nodeadm-config` com falha e sua etapa `nodeadm-run`, exigindo kubelet ativo ao final. Nós saudáveis não são reiniciados. Não substitui instâncias, altera IAM ou apaga dados; falha de gerenciamento ou inicialização interrompe a esteira.
-
-O PR não executa a alteração AWS: `AWS_DEPLOY_ENABLED=false` permanece até a janela autorizada, após merge de Gabriel. O apply parcial do Execução mantém seu state; a correção não recria tabela ou filas e ainda exige nova validação de identidade e acesso DynamoDB/SQS pelo Pod. Healthcheck não comprova essas permissões.
-
-Após a validação real da VPC em 11/11/2026, o retorno do controle a `apply` prepara a próxima etapa da plataforma. `AWS_DEPLOY_ENABLED=false` permanece no repositório; o merge não provisiona EKS/ECR nem instala Datadog. A execução exige janela autorizada e credenciais/dependências reconferidas.
-
-A revisão corrigiu no job de aplicação a restauração do cache para ocorrer antes da validação do state, preparação de destroy e terraform init, seguindo o mesmo padrão da VPC/Execução. A chave continua isolada por conta; o cache e o state não são editados/apagados. O teste inline do CI confere a ordem nos dois jobs. Não acrescenta arquivo ou pasta de scripts.
-
-O futuro apply utiliza a configuração existente: EKS, managed node group nas subnets privadas, ECRs da API e Execução, NLB interno com seus recursos de ingresso e contratos SSM. O CD existente chama em seguida o workflow especializado de Datadog, com Agent e Cluster Agent. Não cria nova role IAM ou workload da aplicação, não provisiona RDS/Gateway e não altera topologia, nomes, versões ou regras dos módulos.
-
-A VPC deve continuar `ready` e publicar os contratos esperados. As roles existentes do laboratório e a chave Datadog configurada precisam funcionar na execução real; testes locais não comprovam IAM, conectividade, admissão do tracer ou ingestão de telemetria. O status de infraestrutura não prova a Saga ou os serviços. Gabriel faz o merge e autoriza separadamente o provisionamento dessa etapa.
-
-## Bloqueio de operação AWS — AUD-001
-
-`AWS_DEPLOY_ENABLED` deve existir no nível do repositório e permanecer `false` enquanto o laboratório estiver offline. Ausente, vazio ou diferente de `true` bloqueia a operação. O caller exige a habilitação antes de chamar o deploy; o workflow reutilizável repete a conferência no Environment e aceita operação física somente em `develop`/`development`, antes de resolver a ação e acessar AWS. Um override no Environment não substitui a habilitação do caller.
-
-A entrada manual e a chamada automática do Datadog usam a mesma trava: o job é pulado sem habilitação ou fora de `develop`, e a primeira etapa confere novamente a flag antes de configurar credenciais ou instalar/atualizar o Agent. O deploy Terraform mantém sua trava existente, agora com conferência de ref/ambiente.
-
-Habilitar a variável não autoriza operação por si só: ainda exige janela combinada com Gabriel, laboratório/credenciais atuais, dependências e os guardrails existentes de plano salvo/state e destroy dedicado. Não altera JWT, rotas, recursos, contratos SSM ou `terraform-action.env`. Merge de código não implanta.
-
-O CI executa a barreira real com flags ausentes/inválidas, branches/tags e ambientes indevidos, além do caso positivo, sem credenciais ou comandos AWS. Testes e validações ficam inline nos workflows existentes, sem novas pastas de scripts. Nesta rodada, integrar somente em `develop`; Gabriel realiza o merge. Não promover release/main ou abrir nova janela de laboratório para este ajuste.
-
-## Promoção cumulativa — AUD-003
-
-A abertura/manutenção automática do PR `develop` → `release` compara todo o conteúdo implantável pendente, seguindo a regra já aprovada na API/Execução. Uma alteração documental não libera código/infraestrutura anterior sem operação confirmada. Detector e guarda compartilham os mesmos caminhos, preservando o escopo de deploy existente.
-
-A guarda exige sucesso da operação atual ou do CD do último commit implantável na linha principal de develop, incluindo o job de apply/destroy da tentativa atual. Deploy pulado/falho, rerun falho, histórico ausente ou erro de Git/GitHub bloqueiam; documentação após operação comprovada continua permitida. É conservadora quando a evidência exigida não está disponível. Não consulta AWS.
-
-Terraform e Datadog têm conferências independentes. Um sucesso somente do Datadog não libera Terraform pendente. A prova da configuração do Datadog considera também o apply posterior que a instalou; exige seu job bem-sucedido. Um destroy confirmado, com controle versionado em destroy e job Terraform bem-sucedido, registra remoção e não exige reinstalar o Agent.
-
-Preserva `AWS_DEPLOY_ENABLED`, `AUTO_PR_ENABLED`, environments, plano salvo, state/cache, guardrails de destroy e merge humano. Não altera ancestralidade (PIPE-005), recursos, contratos SSM ou `terraform-action.env`. PRs existentes continuam sujeitos à revisão humana; a trava protege sua abertura/manutenção pelo CD. Nesta rodada, integrar somente em `develop`, sem promover release/main, sem implantação e com laboratório offline. Testes ficam inline no CI existente, sem novos arquivos ou pastas auxiliares.
-
-## Artefatos por tentativa — AUD-005
-
-Planos Terraform e, na Lambda, o pacote planejado usam `github.run_id` e `github.run_attempt` no nome de publicação/download. Os caches de state também usam conta AWS, ambiente, execução e tentativa. A restauração mantém o prefixo existente de conta/ambiente para recuperar state anterior, sem consultar caches de outra conta ou ambiente; não há fallback equivalente para planos/pacotes. O salvamento final com `always()` permanece para preservar state de apply/destroy parcialmente concluído. Nenhum cache antigo é apagado.
-
-Uma nova tentativa precisa gerar e publicar seus próprios artefatos. Reexecutar somente jobs falhos, mantendo o planejamento bem-sucedido de uma tentativa anterior, não fornece artefatos para a nova tentativa e deve bloquear o download. Para repetir o ciclo, reexecute todos os jobs e gere um novo plano a partir do state recuperado; não renomeie nem copie artefatos antigos nem pule o planejamento. Não é autorizada uma reexecução AWS por este ajuste.
-
-Testes inline verificam nomes de produtor/consumidor, isolamento entre tentativas/execuções/contas/ambientes, ausência de fallback silencioso de artefatos e preservação da configuração de state em falha. São verificações locais/simuladas, não prova de um rerun real de apply no laboratório. Mantém bloqueios AWS, environments, plano salvo, ação versionada, recursos e contratos. Sem novas pastas/arquivos auxiliares. Integrar somente em `develop`, com merge por Gabriel; laboratório offline, sem implantação ou promoção para release/main.
-
-### Ingressos privados dos microsserviços
-
-O NLB interno existente mantém o listener da API na porta 80 e acrescenta listeners TCP independentes: Execução em 8081, com NodePort 30081; Orçamento/Pagamento em 8082, com NodePort 30082. Cada um possui target group e associação ao ASG do node group, seguindo o ingresso da API. Não cria outro balanceador, não renomeia recursos existentes nem publica NodePorts na internet.
-
-Os contratos String sob o prefixo Kubernetes são `execucao_internal_node_port`, `execucao_internal_nlb_listener_arn`, `orcamento_pagamento_internal_node_port` e `orcamento_pagamento_internal_nlb_listener_arn`. Os workloads consomem as portas; o Gateway consome os listeners e mantém a restrição do VPC Link ao SG do NLB. As regras dos nodes aceitam o SG do NLB nas portas específicas.
-
-O status da plataforma depende dos novos recursos e contratos. Após apply, a esteira confere NLB interno, encaminhamento dos listeners, target groups, portas, VPC, SGs e SSM. Isso não atesta health HTTP ou regra de negócio; cada CD de aplicação e o aceite integrado continuam responsáveis por essas provas. Após destroy, confirma também ausência do NLB, dos target groups e contratos novos, tratando erros de acesso como falha.
-
-A configuração de `dev` mantém dois nós `t3.small`, com mínimo de um e máximo de dois. Essa capacidade acomoda os três microsserviços, os agentes de observabilidade e Pods temporários das esteiras, preservando espaço para atualizações graduais. O HPA ajusta réplicas das aplicações; não cria nós automaticamente.
+Fluxo Git: branch de trabalho → PR para `develop` → `release` → `main`. O CD físico ocorre em development; release e production registram promoções lógicas. PRs e merges permanecem sujeitos aos checks e à revisão. Mudanças somente em README/docs não exigem deploy físico pelos detectores atuais.
