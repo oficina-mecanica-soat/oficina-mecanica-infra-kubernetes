@@ -2,7 +2,9 @@
 
 Plataforma compartilhada: EKS, nodes, três repositórios ECR, NLB/listeners privados e Datadog Agent/Cluster Agent. Os workloads são implantados pelas esteiras das aplicações.
 
-## Registries e ingresso privado
+<a id="registries-e-ingresso-privado"></a>
+
+## 📦 Registries e ingresso privado
 
 Os ECRs da API, Execução e Orçamento/Pagamento pertencem a esta esteira; cada aplicação publica sua imagem. Contratos em `/oficina-mecanica/development/kubernetes/` incluem `cluster_name`, `cluster_endpoint`, `cluster_security_group_id`, `node_group_name`, `ecr_repository_url`, `execucao_ecr_repository_url` e `orcamento_pagamento_ecr_repository_url`.
 
@@ -89,7 +91,9 @@ $env:TF_VAR_eks_node_role_name = "LabRole"
 terraform -chdir=infra/terraform/environments/dev plan
 ```
 
-## Operação e documentação
+<a id="operação-e-documentação"></a>
+
+## 🧭 Operação e documentação
 
 - [Visão geral, arquitetura e ordem das esteiras](https://github.com/oficina-mecanica-soat/oficina-mecanica-api#deploy-aws).
 - [Configuração, primeira aplicação e recuperação após Reset](https://github.com/oficina-mecanica-soat/oficina-mecanica-api/blob/develop/docs/deploy/deploy-aws.md).
