@@ -114,3 +114,9 @@ variable "execucao_ecr_repository_name" {
   type        = string
   default     = "oficina-mecanica-execucao"
 }
+
+variable "orcamento_pagamento_ecr_repository_name" {
+  description = "Nome do repositório ECR da imagem do serviço de Orçamento/Pagamento."
+  type        = string
+  default     = "oficina-mecanica-orcamento-pagamento"
+}
