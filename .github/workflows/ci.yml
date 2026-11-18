@@ -135,6 +135,250 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
+      - name: "🧪 Validar bloqueio de AWS sem laboratório"
+        run: |
+          node <<'TESTAR_BLOQUEIO_AWS'
+          const fs = require('node:fs');
+          const cp = require('node:child_process');
+          const assert = require('node:assert/strict');
+          const ler = nome => fs.readFileSync('.github/workflows/' + nome, 'utf8').replace(/\r\n/g, '\n');
+          const deploy = ler('aws-deploy.yml');
+          const cd = ler('cd-development.yml');
+          const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
+          const gate = texto => {
+            const bloco = texto.match(/      - name: "🛡️ Conferir habilitação do deploy AWS"\n([\s\S]*?)(?=      - name:|$)/);
+            assert(bloco, 'Barreira de AWS ausente.');
+            assert(bloco[1].includes('DEPLOY_ENABLED: \u0024{{ vars.AWS_DEPLOY_ENABLED }}'));
+            const script = bloco[1].split('        run: |\n')[1];
+            assert(script, 'Validação executável ausente.');
+            return script.split('\n').map(l => l.slice(10)).join('\n').trim();
+          };
+          function conferirBloqueio(texto) {
+            const script = gate(texto);
+            function executar(flag, ref = 'refs/heads/develop', ambiente = 'development') {
+              const env = { ...process.env, GITHUB_REF: ref, DEPLOY_ENVIRONMENT: ambiente };
+              delete env.DEPLOY_ENABLED;
+              if (flag !== undefined) env.DEPLOY_ENABLED = flag;
+              const resultado = cp.spawnSync(bash, ['-e', '-c', script], { env, encoding: 'utf8' });
+              assert.ifError(resultado.error);
+              return resultado.status;
+            }
+            for (const valor of [undefined, '', 'false', 'TRUE', 'true ']) {
+              assert.notEqual(executar(valor), 0, 'Valor deve bloquear: ' + valor);
+            }
+            assert.equal(executar('true'), 0);
+            for (const ref of ['refs/heads/main', 'refs/heads/release', 'refs/heads/feature/teste', 'refs/tags/develop']) {
+              assert.notEqual(executar('true', ref), 0, 'Ref indevida deve bloquear.');
+            }
+            assert.notEqual(executar('true', 'refs/heads/develop', 'production'), 0);
+            assert.notEqual(executar('true', 'refs/heads/develop', ''), 0);
+          }
+          conferirBloqueio(deploy);
+          assert(deploy.includes('DEPLOY_ENVIRONMENT: \u0024{{ inputs.environment_name }}'), 'Barreira deve conferir o Environment solicitado.');
+          assert(deploy.indexOf('🛡️ Conferir habilitação do deploy AWS') < deploy.indexOf('id: resolve'), 'Resolver ação somente após a barreira.');
+          for (const nome of ['prepare_and_plan', 'apply_or_destroy']) {
+            const job = deploy.split('\n  ' + nome + ':')[1]?.split(/\n  [a-z_]+:/)[0];
+            assert(job && /needs:[\s\S]*?resolve_action/.test(job), 'Job AWS deve depender da barreira.');
+          }
+          if (fs.existsSync('.github/workflows/datadog-observability.yml')) {
+            const datadog = ler('datadog-observability.yml');
+            conferirBloqueio(datadog);
+            const job = datadog.split('\n  deploy-datadog:')[1];
+            assert(job.includes("if: vars.AWS_DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/develop'"));
+            assert(datadog.indexOf('🛡️ Conferir habilitação do deploy AWS') < datadog.indexOf('aws-actions/configure-aws-credentials'), 'Datadog deve bloquear antes das credenciais.');
+            assert(cd.includes("vars.AWS_DEPLOY_ENABLED == 'true'"), 'Caller do Datadog deve preservar a barreira.');
+          } else {
+            const job = cd.split('\n  deploy-development:')[1].split('\n  open-pr-to-release:')[0];
+            assert(job.includes("if: needs.detect-deploy-scope.outputs.deploy_required == 'true' && vars.AWS_DEPLOY_ENABLED == 'true'"), 'Caller deve exigir flag e mudança implantável.');
+          }
+          console.log('Barreira AWS: ausência/false bloqueiam; true exige develop/development; caller e callee protegidos, sem consulta AWS.');
+          TESTAR_BLOQUEIO_AWS
+
+      - name: "🧪 Validar promoção cumulativa sem AWS"
+        run: |
+          node <<'TESTAR_PROMOCAO_CUMULATIVA'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const os = require('node:os');
+          const cp = require('node:child_process');
+          const assert = require('node:assert/strict');
+          const workflow = fs.readFileSync('.github/workflows/cd-development.yml', 'utf8');
+          const bloco = workflow.match(/node <<'VALIDAR_PROMOCAO_CUMULATIVA'\r?\n([\s\S]*?)          VALIDAR_PROMOCAO_CUMULATIVA/);
+          assert(bloco, 'Guarda cumulativa ausente.');
+          const codigo = bloco[1].split(/\r?\n/).map(l => l.slice(10)).join('\n');
+          const validar = new Function(codigo.split('// Execução no runner:')[0] + '; return validarPromocao;')();
+          const detector = workflow.match(/node <<'DETECTAR_DEPLOY'\r?\n([\s\S]*?)          DETECTAR_DEPLOY/)[1].split(/\r?\n/).map(l => l.slice(10)).join('\n');
+          const caminhos = JSON.parse(workflow.match(/DEPLOYABLE_PATHS: >-\r?\n((?:    [^\n]*\r?\n)+)/)[1]);
+          const diretorio = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'promocao-cumulativa-'));
+          try {
+            const git = args => cp.execFileSync('git', args, { cwd: diretorio, encoding: 'utf8' }).trim();
+            git(['init', '-b', 'develop']);
+            git(['config', 'user.email', 'teste@example.invalid']);
+            git(['config', 'user.name', 'Teste local']);
+            const gravar = (nome, conteudo) => {
+              fs.mkdirSync(path.dirname(path.join(diretorio, nome)), { recursive: true });
+              fs.writeFileSync(path.join(diretorio, nome), conteudo);
+              git(['add', nome]);
+              git(['commit', '-m', 'cenário local']);
+              return git(['rev-parse', 'HEAD']);
+            };
+            const base = gravar('README.md', 'base');
+            const docs = gravar('README.md', 'documentação');
+            const consultarNunca = () => { throw new Error('Consulta inesperada.'); };
+            const opcoes = { git, caminhos, base, head: docs, consultar: consultarNunca };
+            assert.equal(validar(opcoes), 'SEM_ALTERACAO_IMPLANTAVEL');
+
+            git(['switch', '-c', 'feature/teste']);
+            gravar('infra/terraform/exemplo.tf', 'código');
+            git(['switch', 'develop']);
+            git(['merge', '--no-ff', 'feature/teste', '-m', 'merge funcional']);
+            const implantavel = git(['rev-parse', 'HEAD']);
+            const head = gravar('README.md', 'documentação depois do código');
+            const detectar = (antes, atual) => {
+              const saida = path.join(diretorio, 'saida-runner.txt');
+              fs.writeFileSync(saida, '');
+              cp.execFileSync(process.execPath, ['-e', detector], {
+                cwd: diretorio,
+                env: { ...process.env, DEPLOYABLE_PATHS: JSON.stringify(caminhos), DATADOG_DEPLOYABLE_PATHS: '["observability/datadog",".github/workflows/datadog-observability.yml"]', GITHUB_BEFORE: antes, GITHUB_SHA: atual, GITHUB_OUTPUT: saida }
+              });
+              return fs.readFileSync(saida, 'utf8').trim();
+            };
+            assert.equal(detectar(base, implantavel), 'terraform_deploy_required=true\ndatadog_deploy_required=false');
+            assert.equal(detectar(implantavel, head), 'terraform_deploy_required=false\ndatadog_deploy_required=false');
+            let chamadas = [];
+            const run = { id: 123, run_attempt: 2, head_sha: implantavel, head_branch: 'develop', event: 'push', status: 'completed', conclusion: 'success' };
+            const job = { name: '☁️ 02 · Deploy em development / ☁️ 03 · Aplicar ou destruir Kubernetes', conclusion: 'success' };
+            const consultar = endpoint => {
+              chamadas.push(endpoint);
+              return endpoint.startsWith('actions/workflows/') ? [{ workflow_runs: [run] }] : [{ jobs: [job] }];
+            };
+            const comCodigo = { ...opcoes, head, consultar };
+            assert.throws(() => validar({ ...comCodigo, consultar: () => [{ workflow_runs: [] }] }), /sem CD/);
+            assert.equal(validar(comCodigo), 'OPERACAO_ANTERIOR_CONFIRMADA');
+            assert(chamadas[0].includes('head_sha=' + implantavel), 'Deve buscar o merge em develop, não o commit da feature/documentação.');
+            assert(chamadas[1].includes('/attempts/2/jobs'), 'Deve consultar a tentativa atual.');
+            for (const estado of ['skipped', 'failure', 'cancelled']) {
+              job.conclusion = estado;
+              assert.throws(() => validar(comCodigo), /sem aplicação/);
+            }
+            job.conclusion = 'success';
+            assert.throws(() => validar({ ...comCodigo, consultar: endpoint => endpoint.startsWith('actions/workflows/') ? [{ workflow_runs: [run] }] : [{}] }), /Jobs/);
+            assert.throws(() => validar({ ...comCodigo, consultar: endpoint => [{ workflow_runs: [{ ...run, head_sha: '0'.repeat(40) }] }] }), /sem CD/);
+            assert.throws(() => validar({ ...comCodigo, consultar: endpoint => [{ workflow_runs: [run, { ...run, id: 124, conclusion: 'failure' }] }] }), /sem CD/);
+            run.conclusion = 'failure';
+            assert.throws(() => validar(comCodigo), /sem CD/);
+            run.conclusion = 'success';
+            run.status = 'in_progress';
+            assert.throws(() => validar(comCodigo), /sem CD/);
+            run.status = 'completed';
+            assert.throws(() => validar({ ...comCodigo, consultar: consultarNunca }), /Consulta inesperada/);
+            assert.throws(() => validar({ ...comCodigo, consultar: () => ({}) }), /Histórico/);
+            assert.equal(validar({ ...comCodigo, consultar: consultarNunca, resultadoAtual: 'success', acaoAtual: 'apply' }), 'OPERACAO_ATUAL_CONFIRMADA');
+            assert.equal(validar({ ...comCodigo, consultar: consultarNunca, resultadoAtual: 'success', acaoAtual: 'destroy' }), 'OPERACAO_ATUAL_CONFIRMADA');
+            assert.throws(() => validar({ ...comCodigo, consultar: consultarNunca, resultadoAtual: 'skipped', acaoAtual: 'apply' }), /Consulta inesperada/);
+            gravar('infra/terraform/exemplo.tf', 'outro código ainda sem deploy');
+            const posterior = gravar('README.md', 'mais documentação');
+            assert.throws(() => validar({ ...comCodigo, head: posterior }), /sem CD/);
+            gravar('infra/terraform/exemplo.tf', 'código');
+            assert.equal(validar({ ...comCodigo, base: implantavel, head: git(['rev-parse', 'HEAD']), consultar: consultarNunca }), 'SEM_ALTERACAO_IMPLANTAVEL');
+            // Terraform e Datadog devem comprovar seus próprios efeitos.
+            gravar('infra/terraform/environments/dev/terraform-action.env', 'TERRAFORM_ACTION=apply');
+            const antesDatadog = git(['rev-parse', 'HEAD']);
+            gravar('observability/datadog/values.yaml', 'agent: teste');
+            gravar('infra/terraform/exemplo.tf', 'terraform posterior');
+            const implantacaoCompleta = git(['rev-parse', 'HEAD']);
+            const docsDatadog = gravar('README.md', 'documentação após Datadog');
+            const nomeDatadog = '🐕 03 · Observabilidade Datadog / ☁️ Instalar ou atualizar observabilidade';
+            const prova = { ...run, head_sha: implantacaoCompleta };
+            let jobs = [{ ...job }, { name: nomeDatadog, conclusion: 'success' }];
+            const consultarDatadog = endpoint => endpoint.startsWith('actions/workflows/') ? [{ workflow_runs: [prova] }] : [{ jobs }];
+            const opcoesDatadog = {
+              git, consultar: consultarDatadog, caminhos: ['observability/datadog'],
+              historicoCaminhos: [...caminhos, 'observability/datadog'], nomeJob: nomeDatadog,
+              base: antesDatadog, head: docsDatadog
+            };
+            assert.equal(validar(opcoesDatadog), 'OPERACAO_ANTERIOR_CONFIRMADA');
+            jobs[1].conclusion = 'skipped';
+            assert.throws(() => validar(opcoesDatadog), /Command failed|sem aplicação/);
+            gravar('infra/terraform/environments/dev/terraform-action.env', 'TERRAFORM_ACTION=destroy');
+            prova.head_sha = git(['rev-parse', 'HEAD']);
+            assert.equal(validar({ ...opcoesDatadog, head: prova.head_sha }), 'REMOCAO_ANTERIOR_CONFIRMADA');
+            jobs[0].conclusion = 'failure';
+            assert.throws(() => validar({ ...opcoesDatadog, head: prova.head_sha }), /sem aplicação/);
+            // Um sucesso atual somente do Datadog não fornece evidência para o Terraform.
+            assert.throws(() => validar({ ...comCodigo, head: prova.head_sha, consultar: () => [{ workflow_runs: [] }], resultadoAtual: 'skipped' }), /sem CD/);
+            console.log('Promoção cumulativa: código sem deploy bloqueado; código implantado seguido de docs permitido; falhas, skips, reruns e novo código protegidos.');
+          } finally {
+            assert.equal(path.dirname(fs.realpathSync(diretorio)), fs.realpathSync(process.env.RUNNER_TEMP || os.tmpdir()));
+            fs.rmSync(diretorio, { recursive: true, force: true });
+          }
+          TESTAR_PROMOCAO_CUMULATIVA
+
+      - name: "🧪 Validar artefatos e cache por tentativa"
+        run: |
+          node <<'TESTAR_ARTEFATOS_TENTATIVA'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const workflow = fs.readFileSync('.github/workflows/aws-deploy.yml', 'utf8').replace(/\r\n/g, '\n');
+          const etapas = workflow.split(/(?=      - name:)/);
+          const upload = etapas.filter(s => /uses: actions\/upload-artifact@/.test(s));
+          const download = etapas.filter(s => /uses: actions\/download-artifact@/.test(s));
+          const restores = etapas.filter(s => /uses: actions\/cache\/restore@/.test(s));
+          const saves = etapas.filter(s => /uses: actions\/cache\/save@/.test(s));
+          assert(upload.length > 0 && upload.length === download.length);
+          assert.equal(restores.length, 2);
+          assert.equal(saves.length, 1);
+          const valor = (etapa, campo) => {
+            const encontrado = etapa.match(new RegExp('^          ' + campo + ': (.+)$', 'm'));
+            assert(encontrado, 'Campo obrigatório: ' + campo);
+            return encontrado[1];
+          };
+          // Escapar o dólar impede interpolação prematura pelo próprio GitHub Actions no teste.
+          const expressao = nome => '\u0024{{ ' + nome + ' }}';
+          const expandir = (modelo, tentativa = 1, execucao = 100, conta = '111111111111', ambiente = 'development') => modelo
+            .replaceAll(expressao('github.run_id'), String(execucao))
+            .replaceAll(expressao('github.run_attempt'), String(tentativa))
+            .replaceAll(expressao('steps.aws_credentials.outputs.aws-account-id'), conta)
+            .replaceAll(expressao('inputs.environment_name'), ambiente);
+          for (const produtor of upload) {
+            const nome = valor(produtor, 'name');
+            assert(nome.includes(expressao('github.run_id')) && nome.includes(expressao('github.run_attempt')));
+            const consumidores = download.filter(s => valor(s, 'name') === nome);
+            assert.equal(consumidores.length, 1, 'Download deve usar exatamente o nome publicado.');
+            assert(produtor.includes('if-no-files-found: error'));
+            assert(!consumidores[0].includes('pattern:') && !consumidores[0].includes('continue-on-error:'), 'Sem fallback silencioso de artefato.');
+            const tentativa1 = expandir(nome);
+            const tentativa2 = expandir(nome, 2);
+            assert.notEqual(tentativa1, tentativa2, 'Rerun não pode colidir com artefato imutável anterior.');
+            assert.notEqual(tentativa2, expandir(nome, 2, 101), 'Execuções diferentes devem permanecer isoladas.');
+            const publicados = new Map([[tentativa1, 'conteúdo da primeira tentativa']]);
+            assert(!publicados.has(tentativa2), 'Sem nova publicação, a segunda tentativa não pode baixar a primeira.');
+            publicados.set(tentativa2, 'conteúdo da segunda tentativa');
+            assert.equal(publicados.get(expandir(valor(consumidores[0], 'name'), 2)), 'conteúdo da segunda tentativa');
+          }
+          const chaveFinal = valor(saves[0], 'key');
+          assert(saves[0].includes('if: always()'), 'Falha do apply não pode pular a preservação do state.');
+          for (const etapa of [...restores, ...saves]) {
+            const chave = valor(etapa, 'key');
+            for (const campo of ['github.run_id', 'github.run_attempt', 'steps.aws_credentials.outputs.aws-account-id', 'inputs.environment_name']) {
+              assert(chave.includes(expressao(campo)), 'Cache deve preservar conta, ambiente, execução e tentativa.');
+            }
+            assert.equal(chave, chaveFinal, 'Restaurar/salvar o mesmo escopo de state.');
+            assert(etapa.includes('/terraform.tfstate') && etapa.includes('/terraform.tfstate.backup'));
+          }
+          for (const etapa of restores) {
+            const prefixo = etapa.match(/          restore-keys: \|\n            ([^\n]+)/)?.[1];
+            assert(prefixo && prefixo.includes(expressao('steps.aws_credentials.outputs.aws-account-id')) && prefixo.includes(expressao('inputs.environment_name')));
+            assert.equal(expandir(chaveFinal).startsWith(expandir(prefixo)), true);
+            assert.notEqual(expandir(prefixo), expandir(prefixo, 1, 100, '222222222222'));
+            assert.notEqual(expandir(prefixo), expandir(prefixo, 1, 100, '111111111111', 'production'));
+          }
+          const antes = expandir(chaveFinal);
+          const depois = expandir(chaveFinal, 2);
+          assert.notEqual(antes, depois, 'State de falha parcial precisa de chave gravável na nova tentativa.');
+          console.log('Artefatos/cache por execução e tentativa: nomes simétricos, sem reaproveitar plano/pacote anterior, conta/ambiente isolados e state sempre preservado na configuração.');
+          TESTAR_ARTEFATOS_TENTATIVA
+
       - name: "🧪 Validar recuperação segura de destroy"
         run: node --test .github/scripts/*.test.cjs
 
@@ -168,7 +412,17 @@ jobs:
           assert.ok(bloco);
           const arquivo = path.join(process.env.RUNNER_TEMP, 'validacao-imds.cjs');
           fs.writeFileSync(arquivo, bloco[1].split(/\r?\n/).map(linha => linha.slice(10)).join('\n'));
-          const { validarGrupo, validarInstancias, conferir } = require(arquivo);
+          const { validarGrupo, validarInstancias, inventarioPronto, conferir, gerenciamentoPronto } = require(arquivo);
+          assert.equal(gerenciamentoPronto(['i-1', 'i-2'], [{ InstanceId: 'i-1', PingStatus: 'Online' }]), false);
+          assert.equal(gerenciamentoPronto(['i-1'], [{ InstanceId: 'i-outro', PingStatus: 'Online' }]), false);
+          assert.equal(gerenciamentoPronto(['i-1'], [{ InstanceId: 'i-1', PingStatus: 'ConnectionLost' }]), false);
+          assert.equal(gerenciamentoPronto([], []), false);
+          assert.match(bloco[1], /const tentativasGerenciamento = 210/);
+          assert.match(bloco[1], /tentativa === tentativasGerenciamento - 1/);
+          assert.equal(gerenciamentoPronto(['i-1'], [{ InstanceId: 'i-1', PingStatus: 'Online' }]), true);
+          assert.match(bloco[1], /systemctl is-failed --quiet nodeadm-config.service/);
+          assert.match(bloco[1], /systemctl is-active --quiet kubelet.service/);
+          assert.match(bloco[1], /await recuperarInicializacao\(ids\)/);
           const grupo = { status: 'ACTIVE', nodeRole: 'arn:aws:iam::123456789012:role/LabRole', resources: { autoScalingGroups: [{ name: 'grupo' }] } };
           assert.deepEqual(validarGrupo(grupo, '123456789012'), ['grupo']);
           assert.throws(() => validarGrupo(grupo, '999999999999'));
@@ -181,6 +435,13 @@ jobs:
           assert.throws(() => validarInstancias(grupos, ['grupo'], [], 'cluster'));
           assert.throws(() => validarInstancias(grupos, ['outro-grupo'], [instancia], 'cluster'));
           assert.throws(() => validarInstancias(grupos, ['grupo'], [{ ...instancia, State: { Name: 'stopped' } }], 'cluster'));
+          const primeiro = { AutoScalingGroupName:'grupo', Instances:[{InstanceId:'i-1',LifecycleState:'InService'}] };
+          assert.equal(inventarioPronto([primeiro],['grupo'],2),false);
+          const completo = {...primeiro,Instances:[...primeiro.Instances,{InstanceId:'i-2',LifecycleState:'InService'}]};
+          assert.equal(inventarioPronto([completo],['grupo'],2),true);
+          assert.equal(inventarioPronto([{...completo,Instances:[...primeiro.Instances,{InstanceId:'i-2',LifecycleState:'Pending'}]}],['grupo'],2),false);
+          assert.throws(()=>inventarioPronto([completo],['outro'],2));
+          assert.throws(()=>inventarioPronto([completo],['grupo'],undefined));
           const opcoes = { State: 'applied', HttpEndpoint: 'enabled', HttpTokens: 'required', HttpPutResponseHopLimit: 2 };
           assert.ok(conferir(opcoes));
           for (const invalida of [{ ...opcoes, State: 'pending' }, { ...opcoes, HttpTokens: 'optional' }, { ...opcoes, HttpPutResponseHopLimit: 1 }, { ...opcoes, HttpEndpoint: 'disabled' }]) assert.equal(conferir(invalida), false);
@@ -201,6 +462,9 @@ jobs:
           const match = workflow.match(/        run: \|\r?\n([\s\S]*?)\r?\n  deploy-development:/);
           assert.ok(match);
           const script = match[1].split(/\r?\n/).map(linha => linha.slice(10)).join('\n');
+          const caminhos = nome => JSON.parse(workflow.match(new RegExp(nome + ': >-\\r?\\n((?:    [^\\n]*\\r?\\n)+)'))[1]);
+          const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
+          const temporarios = process.env.RUNNER_TEMP || os.tmpdir();
           for (const [arquivo, terraform, datadog] of [
             ['infra/terraform/environments/dev/main.tf', true, false],
             ['.github/workflows/aws-deploy.yml', true, false],
@@ -210,7 +474,7 @@ jobs:
             ['.github/workflows/ci.yml', false, false],
             ['README.md', false, false]
           ]) {
-            const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'detector-aws-'));
+            const dir = fs.mkdtempSync(path.join(temporarios, 'detector-aws-'));
             try {
               const git = (...args) => cp.execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
               git('init', '-q'); git('config', 'user.name', 'Teste'); git('config', 'user.email', 'teste@example.invalid');
@@ -219,15 +483,263 @@ jobs:
               fs.mkdirSync(path.dirname(path.join(dir, arquivo)), { recursive: true });
               fs.writeFileSync(path.join(dir, arquivo), 'teste');
               git('add', '.'); git('commit', '-qm', 'mudanca');
-              cp.execFileSync('bash', ['-e', '-o', 'pipefail', '-c', script], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
-                env: { ...process.env, GITHUB_BEFORE: before, GITHUB_SHA: git('rev-parse', 'HEAD'), GITHUB_OUTPUT: 'saida' } });
+              cp.execFileSync(bash, ['-e', '-o', 'pipefail', '-c', script], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
+                env: {
+                  ...process.env, GITHUB_BEFORE: before, GITHUB_SHA: git('rev-parse', 'HEAD'), GITHUB_OUTPUT: 'saida',
+                  DEPLOYABLE_PATHS: JSON.stringify(caminhos('DEPLOYABLE_PATHS')),
+                  DATADOG_DEPLOYABLE_PATHS: JSON.stringify(caminhos('DATADOG_DEPLOYABLE_PATHS'))
+                } });
               const saida = fs.readFileSync(path.join(dir, 'saida'), 'utf8');
               assert.ok(saida.includes(`terraform_deploy_required=${terraform}\n`), arquivo);
               assert.ok(saida.includes(`datadog_deploy_required=${datadog}\n`), arquivo);
-            } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+            } finally {
+              assert.equal(path.dirname(fs.realpathSync(dir)), fs.realpathSync(temporarios));
+              fs.rmSync(dir, { recursive: true, force: true });
+            }
           }
           console.log('Detector real validado: Terraform/workflows AWS, Datadog e alterações sem deploy.');
           VALIDAR_DETECTOR_AWS
+
+      - name: "🛡️ Validar ciclo do registry de Orçamento/Pagamento"
+        run: |
+          node <<'VALIDAR_REGISTRY_ORCAMENTO'
+          const fs=require('node:fs'),assert=require('node:assert/strict');
+          const y=fs.readFileSync('.github/workflows/aws-deploy.yml','utf8').replace(/\r/g,'');
+          for(const nome of ['execucao','orcamento_pagamento']) {
+            assert(y.includes(nome+'_ecr_repository_name_before_destroy:'));
+            assert(y.includes(nome.toUpperCase()+'_ECR_REPOSITORY_NAME_BEFORE_DESTROY:'));
+            for(const sufixo of ['name','url']) {
+              assert(y.includes('test "$(aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/'+nome+'_ecr_repository_'+sufixo+'"'));
+              assert(y.includes('assert_resource_absent "Contrato SSM ECR '+(nome==='execucao'?'Execução':'Orçamento/Pagamento')+(sufixo==='name'?' (nome)':' (URL)')+'"'));
+            }
+          }
+          const modulo=fs.readFileSync('infra/terraform/modules/ecr/variables.tf','utf8');
+          assert(/variable "image_tag_mutability"[\s\S]*?default\s*=\s*"IMMUTABLE"/.test(modulo));
+          assert(/variable "scan_on_push"[\s\S]*?default\s*=\s*true/.test(modulo));
+          const ssm=fs.readFileSync('infra/terraform/environments/dev/ssm-parameters.tf','utf8');
+          const status=ssm.slice(ssm.indexOf('resource "aws_ssm_parameter" "status"'));
+          for(const dependencia of ['module.ecr_orcamento_pagamento,','aws_ssm_parameter.orcamento_pagamento_ecr_repository_name,','aws_ssm_parameter.orcamento_pagamento_ecr_repository_url,']) assert(status.includes(dependencia));
+          const cp=require('node:child_process');
+          const captura=y.split('        id: capture_destroy_context\n')[1]?.split('        run: |\n')[1]?.split('\n      - name:')[0];
+          assert(captura,'Captura real de destroy ausente.');
+          const shell=captura.split('\n').map(l=>l.slice(10)).join('\n');
+          const mocks=`
+          exec 3>&2
+          terraform() { printf '{}'; }
+          jq() { cat >/dev/null; case "$*" in *orcamento_pagamento_ecr_repository_name*) printf 'oficina-mecanica-orcamento-pagamento';; esac; }
+          aws() {
+            printf 'CONSULTA_ORCAMENTO\n' >&3
+            if [ "$RESPOSTA_ECR" = presente ]; then printf 'oficina-mecanica-orcamento-pagamento'; return 0; fi
+            if [ "$RESPOSTA_ECR" = ausente ]; then printf '(RepositoryNotFoundException)' >&2; return 254; fi
+            printf '(AccessDeniedException)' >&2; return 254
+          }
+          export GITHUB_OUTPUT=/dev/null TF_WORKING_DIRECTORY=teste
+          `;
+          for(const resposta of ['presente','ausente','negado']) {
+            const r=cp.spawnSync('bash',['-s'],{input:mocks+'\n'+shell,encoding:'utf8',env:{...process.env,RESPOSTA_ECR:resposta}});
+            assert((r.stderr||'').includes('CONSULTA_ORCAMENTO'),'Registry novo deve ser consultado mesmo sem outputs dos antigos.');
+            assert.equal(r.status===0,resposta!=='negado','Erro de acesso nunca equivale a ausência.');
+          }
+          console.log('Registry próprio, contratos, dependências e validação de apply/destroy preservados.');
+          VALIDAR_REGISTRY_ORCAMENTO
+
+      - name: "🧬 Validar recuperação da instrumentação .NET"
+        run: |
+          node <<'VALIDAR_INSTRUMENTACAO'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const assert = require('node:assert/strict');
+          const workflow = fs.readFileSync('.github/workflows/datadog-observability.yml', 'utf8');
+          const bloco = workflow.match(/          node <<'RECUPERAR_INSTRUMENTACAO'\r?\n([\s\S]*?)          RECUPERAR_INSTRUMENTACAO/);
+          assert.ok(bloco);
+          const arquivo = path.join(process.env.RUNNER_TEMP, 'validar-instrumentacao.cjs');
+          fs.writeFileSync(arquivo, bloco[1].split(/\r?\n/).map(linha => linha.slice(10)).join('\n'));
+          const { instrumentado, requerRecuperacao } = require(arquivo);
+          const deployment = { spec: { template: { metadata: { labels: { 'admission.datadoghq.com/enabled': 'true' }, annotations: { 'admission.datadoghq.com/dotnet-lib.version': '3.50.0' } } } } };
+          const saudavel = { metadata: {}, spec: { initContainers: [{ name: 'datadog-lib-dotnet-init' }] } };
+          const ausente = { metadata: {}, spec: {} };
+          assert.equal(instrumentado(saudavel), true);
+          assert.equal(instrumentado(ausente), false);
+          assert.equal(requerRecuperacao(deployment, [saudavel]), false);
+          assert.equal(requerRecuperacao(deployment, [saudavel, ausente]), true);
+          assert.equal(requerRecuperacao(deployment, [saudavel, { ...ausente, metadata: { deletionTimestamp: 'agora' } }]), false);
+          assert.throws(() => requerRecuperacao({ spec: { template: { metadata: {} } } }, [ausente]));
+          assert.match(bloco[1], /if \(!texto.trim\(\)\) continue/);
+          assert.match(bloco[1], /if \(deployment.spec.replicas === 0\) continue/);
+          assert.match(bloco[1], /if \(requerRecuperacao\(deployment, listar\(\)\)\)/);
+          console.log('Recuperação limitada aos serviços previstos, opt-in explícito e Pods sem biblioteca .NET.');
+          VALIDAR_INSTRUMENTACAO
+
+      - name: "🧪 Validar recuperação de atualização Datadog"
+        run: |
+          node <<'VALIDAR_RECUPERACAO_HELM'
+          const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
+          const y = fs.readFileSync('.github/workflows/datadog-observability.yml', 'utf8');
+          const bloco = y.match(/node <<'RECUPERAR_HELM'\r?\n([\s\S]*?)          RECUPERAR_HELM/);
+          assert(bloco);
+          const arquivo = path.join(process.env.RUNNER_TEMP, 'recuperar-helm.cjs');
+          fs.writeFileSync(arquivo, bloco[1].split(/\r?\n/).map(l => l.slice(10)).join('\n'));
+          const {revisaoRecuperavel} = require(arquivo);
+          const agora = Date.parse('2026-11-16T20:30:00Z');
+          const anterior = {revision: 9, status: 'deployed', chart: 'datadog-3.239.0', updated: '2026-11-16T16:00:00Z'};
+          const pendente = {revision: 10, status: 'pending-upgrade', chart: anterior.chart, updated: '2026-11-16T19:57:00Z'};
+          const validar = h => revisaoRecuperavel(h, agora, anterior.chart);
+          assert.equal(validar([anterior]), null);
+          assert.equal(validar([anterior, pendente]), 9);
+          assert.equal(validar([anterior, {...pendente, status:'pending-rollback'}]), 9);
+          assert.throws(() => validar([pendente]));
+          assert.throws(() => validar([anterior, {...pendente, updated:'2026-11-16T20:29:00Z'}]));
+          assert.throws(() => validar([anterior, {...pendente, updated:'inválida'}]));
+          assert.throws(() => validar([anterior, {...pendente, chart:'outro'}]));
+          assert.throws(() => validar([anterior, {...pendente, status:'pending-install'}]));
+          const vm = require('node:vm');
+          const chamadas = [];
+          vm.runInNewContext(bloco[1].split(/\r?\n/).map(l => l.slice(10)).join('\n'), {
+            require: () => ({ execFileSync: (...args) => { chamadas.push(args); return '[]'; } }),
+            module: { exports: {} },
+            process: { env: { DATADOG_RELEASE_NAME: 'datadog', DATADOG_NAMESPACE: 'datadog', DATADOG_CHART_VERSION: '3.239.0' } },
+            console
+          });
+          assert.equal(chamadas.length, 1);
+          assert.equal(chamadas[0][0], 'helm');
+          assert.equal(chamadas[0][1][0], 'list');
+          assert.match(bloco[1], /'rollback'/);
+          assert(!/uninstall|delete secret|--force/.test(bloco[1]));
+          console.log('Recuperação Helm restrita a revisão válida do mesmo chart; operações recentes, instalação inicial e histórico inválido bloqueados.');
+          VALIDAR_RECUPERACAO_HELM
+
+      - name: "📊 Validar painéis por assunto e serviço"
+        run: |
+          node <<'VALIDAR_PAINEL'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const servicos = new Map([['OS / API', 'oficina-mecanica-api'], ['Execução', 'oficina-mecanica-execucao'], ['Orçamento / Pagamento', 'oficina-mecanica-orcamento-pagamento']]);
+          const metricas = new Map([
+            ['kubernetes.cpu.usage.total', 'sum'], ['kubernetes.memory.usage', 'sum'],
+            ['kubernetes.containers.restarts', 'max'],
+            ['kubernetes_state.deployment.replicas_desired', 'max'],
+            ['kubernetes_state.deployment.replicas_available', 'max'],
+            ['trace.aspnet_core.request', 'p95'], ['trace.aspnet_core.request.hits', 'sum']
+          ]);
+          function validar(painel, assunto) {
+            assert.equal(painel.layout_type, 'ordered');
+            assert.equal(painel.reflow_type, 'fixed');
+            assert.equal(painel.title, 'Oficina Mecânica — ' + assunto);
+            assert(!/default_zero|fill\(zero\)|api[_-]?key|app[_-]?key/i.test(JSON.stringify(painel)));
+            assert.equal(painel.widgets.length, 5);
+            assert.equal(painel.widgets[0].definition.type, 'note');
+            assert(painel.widgets[0].definition.content.includes('Sem dados não significa saudável'));
+            const grupos = painel.widgets.slice(1).map(w => w.definition.title);
+            assert.deepEqual(grupos, [...servicos.keys(), assunto === 'Infraestrutura' ? 'Plataforma compartilhada' : 'Saga — rastreamento entre serviços']);
+            function visitar(widgets, grupo) {
+              for (const {definition: w, layout} of widgets) {
+                for (const campo of ['x', 'y', 'width', 'height']) assert(Number.isInteger(layout?.[campo]));
+                assert(layout.x >= 0 && layout.y >= 0 && layout.width > 0 && layout.height > 0 && layout.x + layout.width <= 12);
+                assert(['note', 'group', 'timeseries', 'list_stream'].includes(w.type));
+                if (w.type === 'note') continue;
+                assert(w.title);
+                if (w.type === 'group') {
+                  assert.equal(grupo, undefined, 'Não criar grupos aninhados.');
+                  assert.equal(w.layout_type, 'ordered');
+                  assert(w.widgets.length > 0);
+                  visitar(w.widgets, w.title);
+                  continue;
+                }
+                assert(grupo && w.requests.length > 0);
+                const servico = servicos.get(grupo);
+                for (const r of w.requests) {
+                  if (w.type === 'list_stream') {
+                    assert.equal(assunto, 'Aplicações');
+                    assert.equal(r.response_format, 'event_list');
+                    assert(['logs_stream', 'trace_stream'].includes(r.query.data_source));
+                    const q = r.query.query_string;
+                    assert(q.includes('env:development') && !q.includes('env:production'));
+                    for (const nome of servicos.values()) assert.equal(q.includes(nome), servico ? nome === servico : true);
+                    assert(r.columns.length > 0);
+                    if (servico) {
+                      if (w.title.startsWith('Diagnóstico das bibliotecas')) {
+                        assert(q.includes('@Properties.SourceContext:(Microsoft* OR System*)'));
+                        assert(q.includes('@Level:(Warning OR Error OR Fatal)'));
+                      } else {
+                        assert(q.includes('@Properties.SourceContext:(OficinaMecanica* OR Serilog.AspNetCore.RequestLoggingMiddleware)'));
+                      }
+                    }
+                    for (const c of r.columns) assert(c.field && ['auto', 'compact', 'full'].includes(c.width));
+                  } else {
+                    const q = /^(max|sum|p95):([a-z_.]+)\{(.+)\} by \{([^}]+)\}(\.as_count\(\))?$/.exec(r.q);
+                    assert(q && metricas.has(q[2]), 'Métrica nativa desconhecida.');
+                    assert.equal(q[1], metricas.get(q[2]));
+                    assert.equal(Boolean(q[5]), q[2] === 'trace.aspnet_core.request.hits');
+                    if (q[2].startsWith('trace.')) {
+                      assert.equal(assunto, 'Aplicações');
+                      assert.equal(q[3], 'env:development,service:' + servico);
+                      assert.equal(q[4], 'service');
+                    } else {
+                      assert.equal(assunto, 'Infraestrutura');
+                      if (servico) {
+                        assert.equal(q[3], 'env:development,kube_deployment:' + servico);
+                        assert.equal(q[4], q[2].endsWith('.restarts') ? 'pod_name,kube_container_name' : 'kube_deployment');
+                      } else {
+                        assert.equal(grupo, 'Plataforma compartilhada');
+                        assert(/^kube_cluster_name:oficina-mecanica-eks-dev,kube_namespace:(datadog|kube-system)$/.test(q[3]));
+                        assert.equal(q[2], 'kubernetes_state.deployment.replicas_available');
+                        assert.equal(q[4], 'kube_deployment');
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            visitar(painel.widgets);
+          }
+          const infra = JSON.parse(fs.readFileSync('observability/datadog/infraestrutura-dashboard.json', 'utf8'));
+          const apps = JSON.parse(fs.readFileSync('observability/datadog/aplicacoes-dashboard.json', 'utf8'));
+          validar(infra, 'Infraestrutura');
+          validar(apps, 'Aplicações');
+          for (const [base, assunto, alterar] of [
+            [infra, 'Infraestrutura', p => { delete p.widgets[1].layout; }],
+            [infra, 'Infraestrutura', p => { p.widgets[1].definition.widgets[0].definition.requests[0].q = 'sum:inventada{*} by {host}'; }],
+            [infra, 'Infraestrutura', p => { const r = p.widgets[1].definition.widgets[0].definition.requests[0]; r.q = r.q.replace('sum:', 'max:'); }],
+            [infra, 'Infraestrutura', p => { const r = p.widgets[1].definition.widgets[1].definition.requests[0]; r.q += '.as_count()'; }],
+            [apps, 'Aplicações', p => { const r = p.widgets[1].definition.widgets[0].definition.requests[0]; r.q = r.q.replace('.as_count()', ''); }],
+            [apps, 'Aplicações', p => { p.widgets[1].definition.widgets[2].definition.requests[0].query.query_string = 'env:production service:outro'; }],
+            [apps, 'Aplicações', p => { p.widgets[1].definition.widgets[2].definition.requests[0].query.query_string += ' service:oficina-mecanica-execucao'; }],
+            [apps, 'Aplicações', p => { p.widgets[2].definition.title = 'OS / API'; }]
+          ]) {
+            const invalido = structuredClone(base);
+            alterar(invalido);
+            assert.throws(() => validar(invalido, assunto));
+          }
+          console.log('Dois painéis válidos: grupos por serviço, fontes nativas, escopos e agregações conferidos; oito cenários inválidos rejeitados.');
+          VALIDAR_PAINEL
+
+      - name: "🧪 Testar validação real dos ingressos privados"
+        run: |
+          node <<'TESTAR_INGRESSOS_PRIVADOS'
+          const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+          const y=fs.readFileSync('.github/workflows/aws-deploy.yml','utf8').replace(/\r/g,'');
+          const bloco=y.split("node <<'VALIDAR_INGRESSOS_PRIVADOS'\n")[1]?.split('          VALIDAR_INGRESSOS_PRIVADOS')[0];
+          assert(bloco,'Validação real ausente.');
+          const codigo=bloco.split('          // Execução no runner')[0].split('\n').map(l=>l.slice(10)).join('\n');
+          const contexto={};vm.runInNewContext(codigo,contexto);
+          const conta='123456789012',regiao='us-east-1',base='arn:aws:elasticloadbalancing:'+regiao+':'+conta+':';
+          const contratos={};for(const [s,node_port,listener_port]of [['execucao',30081,8081],['orcamento_pagamento',30082,8082]])contratos[s]={node_port,listener_port,listener_arn:base+'listener/net/privado/abc/'+s,target_group_arn:base+'targetgroup/'+s+'/abc',nlb_arn:base+'loadbalancer/net/privado/abc',node_security_group_id:'sg-nodes',nlb_security_group_id:'sg-nlb'};
+          const prefixo='/oficina-mecanica/development/kubernetes';
+          const aws=(...a)=>{
+            const c=Object.values(contratos).find(c=>a.includes(c.listener_arn)||a.includes(c.target_group_arn))||contratos.execucao;
+            if(a[1]==='describe-load-balancers')return {LoadBalancers:[{Scheme:'internal',Type:'network',LoadBalancerArn:c.nlb_arn,VpcId:'vpc-teste'}]};
+            if(a[1]==='describe-listeners')return {Listeners:[{ListenerArn:c.listener_arn,LoadBalancerArn:c.nlb_arn,Port:c.listener_port,Protocol:'TCP',DefaultActions:[{Type:'forward',TargetGroupArn:c.target_group_arn}]}]};
+            if(a[1]==='describe-target-groups')return {TargetGroups:[{TargetGroupArn:c.target_group_arn,Port:c.node_port,Protocol:'TCP',TargetType:'instance',VpcId:'vpc-teste'}]};
+            if(a[0]==='ec2')return {SecurityGroupRules:Object.values(contratos).map(c=>({IsEgress:false,IpProtocol:'tcp',FromPort:c.node_port,ToPort:c.node_port,ReferencedGroupInfo:{GroupId:'sg-nlb'}}))};
+            const nome=a[a.indexOf('--name')+1];const owner=Object.keys(contratos).find(k=>nome.startsWith(prefixo+'/'+k+'_'));const v=contratos[owner];return {Parameter:{Type:'String',Value:nome.endsWith('_node_port')?String(v.node_port):v.listener_arn}};
+          };
+          const validar=consultar=>contexto.validarIngressos(contratos,conta,regiao,prefixo,consultar);
+          validar(aws);
+          for(const alterar of [r=>{if(r.LoadBalancers)r.LoadBalancers[0].Scheme='internet-facing';},r=>{if(r.Listeners)r.Listeners[0].Port=80;},r=>{if(r.TargetGroups)r.TargetGroups[0].Port=30080;},r=>{if(r.Parameter)r.Parameter.Value='outro-owner';},r=>{if(r.SecurityGroupRules)r.SecurityGroupRules=[];}])assert.throws(()=>validar((...a)=>{const r=aws(...a);alterar(r);return r;}));
+          assert.throws(()=>validar(()=>{throw Error('AccessDenied');}));
+          assert.throws(()=>contexto.validarIngressos(contratos,'999999999999',regiao,prefixo,aws));
+          console.log('Ingresso privado real: conta, listeners, portas, SGs, SSM e falhas de consulta verificados.');
+          TESTAR_INGRESSOS_PRIVADOS
 
       - name: "🎨 03 · Verificar formatação Terraform"
         run: |
@@ -240,6 +752,9 @@ jobs:
       - name: "🔍 05 · Validar configuração Terraform"
         run: |
           terraform -chdir="$TF_WORKING_DIRECTORY" validate
+
+      - name: "🧪 06 · Validar contratos dos três registries sem AWS"
+        run: terraform -chdir="$TF_WORKING_DIRECTORY" test
 
   quality_gate:
     name: "🚦 03 · Quality gate"

@@ -82,3 +82,13 @@ output "execucao_ecr_repository_url" {
   description = "URL do repositório ECR da imagem do serviço de Execução."
   value       = module.ecr_execucao.repository_url
 }
+
+output "orcamento_pagamento_ecr_repository_name" {
+  description = "Nome do repositório ECR da imagem do serviço de Orçamento/Pagamento."
+  value       = module.ecr_orcamento_pagamento.repository_name
+}
+
+output "orcamento_pagamento_ecr_repository_url" {
+  description = "URL do repositório ECR da imagem do serviço de Orçamento/Pagamento."
+  value       = module.ecr_orcamento_pagamento.repository_url
+}

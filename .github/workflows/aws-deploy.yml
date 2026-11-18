@@ -39,7 +39,11 @@ jobs:
       - name: "🛡️ Conferir habilitação do deploy AWS"
         env:
           DEPLOY_ENABLED: ${{ vars.AWS_DEPLOY_ENABLED }}
-        run: test "$DEPLOY_ENABLED" = true
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment_name }}
+        run: |
+          test "$DEPLOY_ENABLED" = true
+          test "$GITHUB_REF" = refs/heads/develop
+          test "$DEPLOY_ENVIRONMENT" = development
 
       - name: "🚦 02 · Ler terraform-action.env e validar troca segura de destroy"
         id: resolve_terraform_action
@@ -102,6 +106,7 @@ jobs:
       cluster_name_before_destroy: ${{ steps.capture_destroy_context.outputs.cluster_name_before_destroy }}
       ecr_repository_name_before_destroy: ${{ steps.capture_destroy_context.outputs.ecr_repository_name_before_destroy }}
       execucao_ecr_repository_name_before_destroy: ${{ steps.capture_destroy_context.outputs.execucao_ecr_repository_name_before_destroy }}
+      orcamento_pagamento_ecr_repository_name_before_destroy: ${{ steps.capture_destroy_context.outputs.orcamento_pagamento_ecr_repository_name_before_destroy }}
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       EKS_CLUSTER_ROLE_NAME: ${{ vars.EKS_CLUSTER_ROLE_NAME || 'LabRole' }}
@@ -156,7 +161,7 @@ jobs:
           path: |
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate.backup
-          key: tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-${{ github.run_id }}
+          key: tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-
 
@@ -216,6 +221,7 @@ jobs:
           cluster_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -json | jq -r '.eks_cluster_name.value // empty')"
           ecr_repository_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -json | jq -r '.ecr_repository_name.value // empty')"
           execucao_ecr_repository_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -json | jq -r '.execucao_ecr_repository_name.value // empty')"
+          orcamento_pagamento_ecr_repository_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -json | jq -r '.orcamento_pagamento_ecr_repository_name.value // empty')"
 
           if [ -z "$cluster_name" ]; then
             echo "::warning::EKS output is absent from Terraform state. Continuing as partial destroy recovery."
@@ -256,9 +262,23 @@ jobs:
             fi
           fi
 
+          if [ -z "$orcamento_pagamento_ecr_repository_name" ]; then
+            echo "::warning::ECR output is absent from Terraform state. Continuing as partial destroy recovery."
+          else
+            if assert_resource_present_or_absent "ECR repository $orcamento_pagamento_ecr_repository_name" aws ecr describe-repositories --repository-names "$orcamento_pagamento_ecr_repository_name" --query 'repositories[0].repositoryName' --output text; then
+              :
+            else
+              inspection_status=$?
+              if [ "$inspection_status" -ne 10 ]; then
+                exit "$inspection_status"
+              fi
+            fi
+          fi
+
           echo "cluster_name_before_destroy=$cluster_name" >> "$GITHUB_OUTPUT"
           echo "ecr_repository_name_before_destroy=$ecr_repository_name" >> "$GITHUB_OUTPUT"
           echo "execucao_ecr_repository_name_before_destroy=$execucao_ecr_repository_name" >> "$GITHUB_OUTPUT"
+          echo "orcamento_pagamento_ecr_repository_name_before_destroy=$orcamento_pagamento_ecr_repository_name" >> "$GITHUB_OUTPUT"
           echo "Kubernetes destroy context captured when available."
 
       - name: "📐 10 · Gerar plano do Terraform (apply)"
@@ -272,7 +292,7 @@ jobs:
       - name: "⬆️ 11 · Publicar plano do Terraform como artefato"
         uses: actions/upload-artifact@v7
         with:
-          name: tfplan-kubernetes-${{ github.run_id }}
+          name: tfplan-kubernetes-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.TF_WORKING_DIRECTORY }}/tfplan
           retention-days: 1
           if-no-files-found: error
@@ -291,6 +311,7 @@ jobs:
       CLUSTER_NAME_BEFORE_DESTROY: ${{ needs.prepare_and_plan.outputs.cluster_name_before_destroy }}
       ECR_REPOSITORY_NAME_BEFORE_DESTROY: ${{ needs.prepare_and_plan.outputs.ecr_repository_name_before_destroy }}
       EXECUCAO_ECR_REPOSITORY_NAME_BEFORE_DESTROY: ${{ needs.prepare_and_plan.outputs.execucao_ecr_repository_name_before_destroy }}
+      ORCAMENTO_PAGAMENTO_ECR_REPOSITORY_NAME_BEFORE_DESTROY: ${{ needs.prepare_and_plan.outputs.orcamento_pagamento_ecr_repository_name_before_destroy }}
 
     steps:
       - name: "📥 01 · Baixar código do repositório"
@@ -317,7 +338,7 @@ jobs:
           path: |
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate.backup
-          key: tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-${{ github.run_id }}
+          key: tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-
 
@@ -334,7 +355,7 @@ jobs:
       - name: "⬇️ 06 · Baixar plano do Terraform publicado"
         uses: actions/download-artifact@v8
         with:
-          name: tfplan-kubernetes-${{ github.run_id }}
+          name: tfplan-kubernetes-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.TF_WORKING_DIRECTORY }}
 
       - name: "🛡️ Validar plano exclusivo de destroy"
@@ -355,7 +376,7 @@ jobs:
           path: |
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate
             ${{ env.TF_WORKING_DIRECTORY }}/terraform.tfstate.backup
-          key: tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-${{ github.run_id }}
+          key: tfstate-kubernetes-${{ steps.aws_credentials.outputs.aws-account-id }}-${{ inputs.environment_name }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: "🛡️ Ajustar IMDSv2 da identidade acadêmica nos nodes atuais"
         if: env.TERRAFORM_ACTION == 'apply'
@@ -382,18 +403,67 @@ jobs:
               throw new Error('Inventário dos nodes incompleto, incompatível ou fora do cluster.');
             return ids;
           }
+          function inventarioPronto(grupos, nomes, esperado) {
+            if (!Number.isSafeInteger(esperado) || esperado < 1) throw Error('Quantidade desejada de nodes inválida.');
+            if (grupos.length !== nomes.length || grupos.some(grupo => !nomes.includes(grupo.AutoScalingGroupName)))
+              throw Error('Inventário de Auto Scaling Groups divergente.');
+            const instancias = grupos.flatMap(grupo => grupo.Instances || []);
+            return instancias.length === esperado && new Set(instancias.map(item => item.InstanceId)).size === esperado
+              && instancias.every(item => item.InstanceId && item.LifecycleState === 'InService');
+          }
           function conferir(opcoes) {
             return opcoes?.State === 'applied' && opcoes.HttpEndpoint === 'enabled'
               && opcoes.HttpTokens === 'required' && opcoes.HttpPutResponseHopLimit === 2;
+          }
+          function gerenciamentoPronto(ids, informacoes) {
+            return ids.length > 0 && ids.every(id => informacoes.some(item => item.InstanceId === id && item.PingStatus === 'Online'));
+          }
+          async function recuperarInicializacao(ids) {
+            // O SSM Agent pode aguardar até 30 minutos para renovar credenciais após falha (AWS Academy).
+            const tentativasGerenciamento = 210; // 35 minutos, incluindo registro e propagação.
+            for (let tentativa = 0; tentativa < tentativasGerenciamento; tentativa++) {
+              const informacoes = consultar('ssm', 'describe-instance-information', '--filters',
+                JSON.stringify([{ Key: 'InstanceIds', Values: ids }])).InstanceInformationList;
+              if (gerenciamentoPronto(ids, informacoes)) break;
+              if (tentativa === tentativasGerenciamento - 1) throw Error('Gerenciamento dos nós indisponível após 35 minutos; recuperação não executada.');
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
+            const comandos = ['set -eu',
+              'if systemctl is-failed --quiet nodeadm-config.service; then',
+              '  systemctl reset-failed nodeadm-config.service nodeadm-run.service',
+              '  systemctl start nodeadm-config.service',
+              '  systemctl start nodeadm-run.service',
+              'fi',
+              'systemctl is-active --quiet kubelet.service'];
+            const comando = consultar('ssm', 'send-command', '--document-name', 'AWS-RunShellScript',
+              '--instance-ids', ...ids, '--timeout-seconds', '900',
+              '--parameters', JSON.stringify({ commands: comandos, executionTimeout: ['900'] }),
+              '--comment', 'Recuperar inicialização EKS interrompida pelo encerramento Academy').Command.CommandId;
+            for (let tentativa = 0; tentativa < 100; tentativa++) {
+              const resultados = consultar('ssm', 'list-command-invocations', '--command-id', comando).CommandInvocations;
+              if (resultados.some(item => ['Failed', 'Cancelled', 'TimedOut'].includes(item.Status)))
+                throw Error('Inicialização dos nós não recuperada; conferir execução SSM pela esteira.');
+              if (resultados.length === ids.length && resultados.every(item => ids.includes(item.InstanceId) && item.Status === 'Success')) {
+                console.log('Kubelet ativo nos nós do grupo; somente inicializações com falha foram retomadas.');
+                return;
+              }
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
+            throw Error('Prazo de recuperação da inicialização EKS excedido.');
           }
           async function main() {
             const tf = nome => cp.execFileSync('terraform', [`-chdir=${process.env.TF_WORKING_DIRECTORY}`, 'output', '-raw', nome], { encoding: 'utf8' }).trim();
             const cluster = tf('eks_cluster_name');
             const grupo = consultar('eks', 'describe-nodegroup', '--cluster-name', cluster, '--nodegroup-name', tf('eks_node_group_name')).nodegroup;
             const nomes = validarGrupo(grupo, consultar('sts', 'get-caller-identity').Account);
-            const grupos = consultar('autoscaling', 'describe-auto-scaling-groups', '--auto-scaling-group-names', ...nomes).AutoScalingGroups;
+            let grupos;
+            for (let tentativa = 0; tentativa < 36; tentativa++) {
+              grupos = consultar('autoscaling', 'describe-auto-scaling-groups', '--auto-scaling-group-names', ...nomes).AutoScalingGroups;
+              if (inventarioPronto(grupos, nomes, grupo.scalingConfig?.desiredSize)) break;
+              if (tentativa === 35) throw Error('Expansão dos nodes não confirmada no prazo; identidade acadêmica pendente.');
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            }
             const ids = grupos.flatMap(item => item.Instances || []).map(item => item.InstanceId);
-            if (!ids.length) throw new Error('Nenhum node disponível para configurar.');
             const listar = () => consultar('ec2', 'describe-instances', '--instance-ids', ...ids).Reservations.flatMap(item => item.Instances);
             validarInstancias(grupos, nomes, listar(), cluster);
             for (const id of ids) consultar('ec2', 'modify-instance-metadata-options', '--instance-id', id,
@@ -403,6 +473,7 @@ jobs:
               validarInstancias(grupos, nomes, atuais, cluster);
               if (atuais.every(item => conferir(item.MetadataOptions))) {
                 console.log(`IMDSv2 obrigatório e hop limit 2 confirmados em ${ids.length} node(s) do grupo acadêmico.`);
+                await recuperarInicializacao(ids);
                 return;
               }
               await new Promise(resolve => setTimeout(resolve, 2000));
@@ -410,7 +481,7 @@ jobs:
             throw new Error('Configuração IMDSv2 não foi confirmada no prazo.');
           }
           if (!module.parent) main().catch(error => { console.error(error.message); process.exitCode = 1; });
-          module.exports = { validarGrupo, validarInstancias, conferir };
+          module.exports = { validarGrupo, validarInstancias, inventarioPronto, conferir, gerenciamentoPronto };
           CONFIGURAR_IMDS_ACADEMICO
 
       - name: "🔎 09 · Validar Kubernetes real após apply"
@@ -440,8 +511,15 @@ jobs:
           execucao_ecr_repository_url="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -raw execucao_ecr_repository_url)"
           actual_url="$(aws ecr describe-repositories --repository-names "$execucao_ecr_repository_name" --query 'repositories[0].repositoryUri' --output text)"
           test "$actual_url" = "$execucao_ecr_repository_url"
+
+          orcamento_pagamento_ecr_repository_name="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -raw orcamento_pagamento_ecr_repository_name)"
+          orcamento_pagamento_ecr_repository_url="$(terraform -chdir="$TF_WORKING_DIRECTORY" output -raw orcamento_pagamento_ecr_repository_url)"
+          actual_url="$(aws ecr describe-repositories --repository-names "$orcamento_pagamento_ecr_repository_name" --query 'repositories[0].repositoryUri' --output text)"
+          test "$actual_url" = "$orcamento_pagamento_ecr_repository_url"
           test "$(aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/execucao_ecr_repository_name" --query Parameter.Value --output text)" = "$execucao_ecr_repository_name"
           test "$(aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/execucao_ecr_repository_url" --query Parameter.Value --output text)" = "$execucao_ecr_repository_url"
+          test "$(aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/orcamento_pagamento_ecr_repository_name" --query Parameter.Value --output text)" = "$orcamento_pagamento_ecr_repository_name"
+          test "$(aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/orcamento_pagamento_ecr_repository_url" --query Parameter.Value --output text)" = "$orcamento_pagamento_ecr_repository_url"
 
           ssm_cluster_name="$(aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/cluster_name" --query 'Parameter.Value' --output text)"
           if [ "$ssm_cluster_name" != "$cluster_name" ]; then
@@ -456,6 +534,40 @@ jobs:
           fi
 
           echo "Kubernetes infrastructure validated successfully in AWS and SSM."
+
+      - name: "🔎 Validar ingressos privados e contratos dos serviços"
+        if: env.TERRAFORM_ACTION == 'apply'
+        run: |
+          node <<'VALIDAR_INGRESSOS_PRIVADOS'
+          function validarIngressos(contratos,conta,regiao,prefixo,consultar) {
+            const portas={execucao:[30081,8081],orcamento_pagamento:[30082,8082]};
+            if(!contratos||Object.keys(contratos).sort().join(',')!==Object.keys(portas).sort().join(','))throw Error('Contratos de ingresso incompletos.');
+            for(const [servico,c]of Object.entries(contratos)) {
+              if(c.node_port!==portas[servico][0]||c.listener_port!==portas[servico][1])throw Error('Portas contratuais divergentes.');
+              const base='arn:aws:elasticloadbalancing:'+regiao+':'+conta+':';
+              if(!c.listener_arn.startsWith(base+'listener/net/')||!c.target_group_arn.startsWith(base+'targetgroup/')||!c.nlb_arn.startsWith(base+'loadbalancer/net/'))throw Error('Ingresso pertence a outra conta, região ou tipo.');
+              const lb=consultar('elbv2','describe-load-balancers','--load-balancer-arns',c.nlb_arn).LoadBalancers;
+              if(!Array.isArray(lb)||lb.length!==1||lb[0].Scheme!=='internal'||lb[0].Type!=='network'||lb[0].LoadBalancerArn!==c.nlb_arn)throw Error('NLB não é o ingresso privado esperado.');
+              const ls=consultar('elbv2','describe-listeners','--listener-arns',c.listener_arn).Listeners;
+              if(!Array.isArray(ls)||ls.length!==1||ls[0].ListenerArn!==c.listener_arn||ls[0].LoadBalancerArn!==c.nlb_arn||ls[0].Port!==c.listener_port||ls[0].Protocol!=='TCP'||ls[0].DefaultActions?.length!==1||ls[0].DefaultActions[0].Type!=='forward'||ls[0].DefaultActions[0].TargetGroupArn!==c.target_group_arn)throw Error('Listener não aponta ao owner esperado.');
+              const ts=consultar('elbv2','describe-target-groups','--target-group-arns',c.target_group_arn).TargetGroups;
+              if(!Array.isArray(ts)||ts.length!==1||ts[0].TargetGroupArn!==c.target_group_arn||ts[0].Port!==c.node_port||ts[0].Protocol!=='TCP'||ts[0].TargetType!=='instance'||ts[0].VpcId!==lb[0].VpcId)throw Error('Target group diverge do NodePort ou da VPC.');
+              for(const [sufixo,valor]of [['internal_node_port',String(c.node_port)],['internal_nlb_listener_arn',c.listener_arn]]) {
+                const p=consultar('ssm','get-parameter','--name',prefixo+'/'+servico+'_'+sufixo).Parameter;
+                if(p?.Type!=='String'||p.Value!==valor)throw Error('Contrato SSM diverge do ingresso real.');
+              }
+              const regras=consultar('ec2','describe-security-group-rules','--filters','Name=group-id,Values='+c.node_security_group_id).SecurityGroupRules;
+              if(!Array.isArray(regras)||!regras.some(r=>r.IsEgress===false&&r.IpProtocol==='tcp'&&r.FromPort===c.node_port&&r.ToPort===c.node_port&&r.ReferencedGroupInfo?.GroupId===c.nlb_security_group_id))throw Error('Regra privada NLB para NodePort não confirmada.');
+            }
+          }
+          // Execução no runner: somente consultas; falhas não equivalem a ausência.
+          const cp=require('node:child_process');
+          const run=(cmd,args)=>JSON.parse(cp.execFileSync(cmd,args,{encoding:'utf8',stdio:['ignore','pipe','pipe']}));
+          const contratos=run('terraform',['-chdir='+process.env.TF_WORKING_DIRECTORY,'output','-json','microsservicos_private_ingress']);
+          const conta=run('aws',['sts','get-caller-identity','--output','json']).Account;
+          validarIngressos(contratos,conta,process.env.AWS_REGION,process.env.SSM_KUBERNETES_PREFIX,(...args)=>run('aws',[...args,'--region',process.env.AWS_REGION,'--output','json']));
+          console.log('Ingressos privados e contratos confirmados; não comprova workload ou fluxo de negócio.');
+          VALIDAR_INGRESSOS_PRIVADOS
 
       - name: "🔎 09 · Validar remoção real após destroy"
         if: env.TERRAFORM_ACTION == 'destroy'
@@ -473,7 +585,7 @@ jobs:
             else
               local command_status=$?
               case "$command_output" in
-                *ResourceNotFoundException*|*RepositoryNotFoundException*|*ParameterNotFound*)
+                *ResourceNotFoundException*|*RepositoryNotFoundException*|*ParameterNotFound*|*"(LoadBalancerNotFound)"*|*"(TargetGroupNotFound)"*)
                   echo "${resource_label} is absent after destroy."
                   return 0
                   ;;
@@ -504,9 +616,28 @@ jobs:
             assert_resource_absent "ECR repository $EXECUCAO_ECR_REPOSITORY_NAME_BEFORE_DESTROY" aws ecr describe-repositories --repository-names "$EXECUCAO_ECR_REPOSITORY_NAME_BEFORE_DESTROY" --query 'repositories[0].repositoryName' --output text
           fi
 
+          if [ -z "$ORCAMENTO_PAGAMENTO_ECR_REPOSITORY_NAME_BEFORE_DESTROY" ]; then
+            echo "::warning::ECR output was absent before destroy; no repository identifier is available for post-destroy verification."
+          else
+            assert_resource_absent "ECR repository $ORCAMENTO_PAGAMENTO_ECR_REPOSITORY_NAME_BEFORE_DESTROY" aws ecr describe-repositories --repository-names "$ORCAMENTO_PAGAMENTO_ECR_REPOSITORY_NAME_BEFORE_DESTROY" --query 'repositories[0].repositoryName' --output text
+          fi
+
           assert_resource_absent "Contrato SSM ECR Execução (nome)" aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/execucao_ecr_repository_name" --query Parameter.Value --output text
           assert_resource_absent "Contrato SSM ECR Execução (URL)" aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/execucao_ecr_repository_url" --query Parameter.Value --output text
 
+          assert_resource_absent "Contrato SSM ECR Orçamento/Pagamento (nome)" aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/orcamento_pagamento_ecr_repository_name" --query Parameter.Value --output text
+          assert_resource_absent "Contrato SSM ECR Orçamento/Pagamento (URL)" aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/orcamento_pagamento_ecr_repository_url" --query Parameter.Value --output text
+
           assert_resource_absent "Kubernetes status parameter $SSM_KUBERNETES_STATUS_PARAMETER" aws ssm get-parameter --name "$SSM_KUBERNETES_STATUS_PARAMETER" --query 'Parameter.Value' --output text
+
+          assert_resource_absent "NLB privado" aws elbv2 describe-load-balancers --names oficina-mecanica-api-nlb-dev
+          for target_group in oficina-execucao-tg-dev oficina-orcamento-tg-dev; do
+            assert_resource_absent "Target group $target_group" aws elbv2 describe-target-groups --names "$target_group"
+          done
+          for owner in execucao orcamento_pagamento; do
+            for suffix in internal_node_port internal_nlb_listener_arn; do
+              assert_resource_absent "Contrato privado $owner/$suffix" aws ssm get-parameter --name "$SSM_KUBERNETES_PREFIX/${owner}_${suffix}"
+            done
+          done
 
           echo "Kubernetes resources removed and SSM status cleaned."

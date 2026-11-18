@@ -70,12 +70,37 @@ resource "aws_ssm_parameter" "execucao_ecr_repository_url" {
   tags = local.common_tags
 }
 
+resource "aws_ssm_parameter" "orcamento_pagamento_ecr_repository_name" {
+  name        = "${var.kubernetes_ssm_prefix}/orcamento_pagamento_ecr_repository_name"
+  description = "Nome do repositório ECR da imagem do serviço de Orçamento/Pagamento."
+  type        = "String"
+  value       = module.ecr_orcamento_pagamento.repository_name
+
+  tags = local.common_tags
+}
+
+resource "aws_ssm_parameter" "orcamento_pagamento_ecr_repository_url" {
+  name        = "${var.kubernetes_ssm_prefix}/orcamento_pagamento_ecr_repository_url"
+  description = "URL do repositório ECR da imagem do serviço de Orçamento/Pagamento."
+  type        = "String"
+  value       = module.ecr_orcamento_pagamento.repository_url
+
+  tags = local.common_tags
+}
+
 resource "aws_ssm_parameter" "status" {
   # Publicar ready somente após concluir a infraestrutura e seus contratos SSM.
   depends_on = [
     module.eks,
+    aws_lb_listener.microsservicos_internal,
+    aws_autoscaling_attachment.microsservicos_internal,
+    aws_vpc_security_group_ingress_rule.nodes_from_microsservicos_nlb,
+    aws_vpc_security_group_egress_rule.nlb_to_microsservicos,
+    aws_ssm_parameter.microsservicos_internal_node_port,
+    aws_ssm_parameter.microsservicos_internal_nlb_listener_arn,
     module.ecr,
     module.ecr_execucao,
+    module.ecr_orcamento_pagamento,
     aws_ssm_parameter.cluster_name,
     aws_ssm_parameter.cluster_endpoint,
     aws_ssm_parameter.cluster_security_group_id,
@@ -83,7 +108,9 @@ resource "aws_ssm_parameter" "status" {
     aws_ssm_parameter.ecr_repository_name,
     aws_ssm_parameter.ecr_repository_url,
     aws_ssm_parameter.execucao_ecr_repository_name,
+    aws_ssm_parameter.orcamento_pagamento_ecr_repository_name,
     aws_ssm_parameter.execucao_ecr_repository_url,
+    aws_ssm_parameter.orcamento_pagamento_ecr_repository_url,
   ]
 
   name        = var.kubernetes_status_parameter_name
