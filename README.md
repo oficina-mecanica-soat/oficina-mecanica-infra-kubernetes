@@ -2,6 +2,32 @@
 
 Plataforma compartilhada: EKS, nodes, três repositórios ECR, NLB/listeners privados e Datadog Agent/Cluster Agent. Os workloads são implantados pelas esteiras das aplicações.
 
+## 🏗️ Recursos provisionados por esta esteira
+
+| Escopo | Recursos criados ou configurados | Consumidores |
+| --- | --- | --- |
+| Computação compartilhada | Cluster EKS, Managed Node Group e add-on Metrics Server | Os três microsserviços e componentes da plataforma |
+| Rede privada compartilhada | Um NLB interno, security group e regras de tráfego entre NLB e nodes | API Gateway via VPC Link |
+| OS / API | ECR `oficina-mecanica-api`, target group, associação ao grupo de nodes e listener TCP/80 → NodePort 30080 | Deploy da API e integração privada de OS no Gateway |
+| Execução | ECR `oficina-mecanica-execucao`, target group próprio, associação ao grupo de nodes e listener TCP/8081 → NodePort 30081 | Deploy do Execução e integração privada de Execução no Gateway |
+| Orçamento/Pagamento | ECR `oficina-mecanica-orcamento-pagamento`, target group próprio, associação ao grupo de nodes e listener TCP/8082 → NodePort 30082 | Deploy de Orçamento/Pagamento e integração privada correspondente no Gateway |
+| Contratos | Parâmetros SSM de EKS, registries, listeners, NodePorts e prontidão da plataforma | Esteiras RDS, aplicações, Auth e Gateway |
+| Observabilidade | Datadog Agent e Cluster Agent instalados/configurados por Helm no workflow `datadog-observability.yml`, chamado pelo CD | Métricas de Kubernetes, coleta de logs e recepção de traces dos serviços |
+
+Os nomes dos ECRs acima são os padrões configuráveis do ambiente. O NLB e o EKS são compartilhados; os três ECRs, listeners e target groups são distintos. Esta esteira cria os registries, mas **as esteiras das aplicações publicam as imagens**.
+
+### 🔎 O que pertence às esteiras dos microsserviços
+
+| Esteira | Recursos que ela provisiona no ambiente compartilhado |
+| --- | --- |
+| [API / OS](https://github.com/oficina-mecanica-soat/oficina-mecanica-api) | Namespace, Deployment, ConfigMap, Secret, Service NodePort e HPA da API; entrada FIFO, DLQ e contratos de OS |
+| [Execução](https://github.com/oficina-mecanica-soat/oficina-mecanica-execucao) | Namespace, Deployment, Secret e Service NodePort de Execução; tabela DynamoDB, entrada FIFO, DLQ e contratos próprios; não cria ConfigMap ou HPA no Terraform atual |
+| [Orçamento/Pagamento](https://github.com/oficina-mecanica-soat/oficina-mecanica-orcamento-pagamento) | Namespace, Deployment, ConfigMap, Secret, Service NodePort e HPA do serviço; entrada FIFO, DLQ e contratos próprios |
+
+Bancos SQL e logins são preparados pela [esteira RDS](https://github.com/oficina-mecanica-soat/oficina-mecanica-infra-rds). A função de autenticação e as rotas públicas pertencem às esteiras Auth e Gateway. Esta esteira Kubernetes não substitui esses provisionamentos nem instala as aplicações de negócio por conta própria.
+
+Fontes: [módulos EKS/ECR](infra/terraform/environments/dev/main.tf), [ingresso privado de OS](infra/terraform/environments/dev/private-ingress.tf), [ingressos dos participantes](infra/terraform/environments/dev/microsservicos-private-ingress.tf) e [workflow Datadog](.github/workflows/datadog-observability.yml).
+
 <a id="registries-e-ingresso-privado"></a>
 
 ## 📦 Registries e ingresso privado
